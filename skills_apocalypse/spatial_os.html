@@ -40,22 +40,21 @@
 (()=>{
   const SCALE_KEY='apocalypse.uiScale.v2',STEPS=[1,1.15,1.3,1.45],scaleBtn=document.getElementById('scaleBtn'),universe=document.getElementById('universe');
   let currentScale=Number(localStorage.getItem(SCALE_KEY)||1.15);if(!STEPS.includes(currentScale))currentScale=1.15;
-  const bases=new WeakMap();
-  function eligible(el){return el instanceof HTMLElement&&!el.closest('.ui-scale-menu')&&!el.matches('canvas,svg,path,line,polyline,polygon')}
-  function snapshot(root=document.body){
-    const els=[root,...root.querySelectorAll('*')].filter(eligible);
-    // Critical: capture every computed size BEFORE changing any element. This
-    // prevents inherited descendants from receiving scale twice.
-    const vals=els.map(el=>[el,parseFloat(getComputedStyle(el).fontSize)]);
-    for(const [el,fs] of vals)if(Number.isFinite(fs)&&fs>0&&!bases.has(el))bases.set(el,fs);
-    return els;
-  }
-  function applyScale(root=document.body){for(const el of snapshot(root)){const b=bases.get(el);if(b)el.style.fontSize=(b*currentScale).toFixed(2)+'px'}if(scaleBtn){scaleBtn.dataset.scale=Math.round(currentScale*100)+'%';scaleBtn.title=`UI scale · ${Math.round(currentScale*100)}%`}}
-  // Snapshot the initial DOM at its untouched CSS sizes before any 115% scale.
-  snapshot();
+
+  // Capture the original CSS-computed sizes exactly once, before applying any
+  // scale. Never re-snapshot dynamic descendants: they may inherit an already
+  // scaled parent, which was the source of the runaway 115% -> 132% -> ... bug.
+  const bases=new Map();
+  const initial=[document.body,...document.body.querySelectorAll('*')].filter(el=>el instanceof HTMLElement&&!el.matches('canvas,svg,path,line,polyline,polygon'));
+  const initialSizes=initial.map(el=>[el,parseFloat(getComputedStyle(el).fontSize)]);
+  for(const [el,fs] of initialSizes)if(Number.isFinite(fs)&&fs>0)bases.set(el,fs);
+
   const menu=document.createElement('div');menu.className='ui-scale-menu';menu.innerHTML=STEPS.map(v=>`<button data-ui-scale="${v}">${Math.round(v*100)}%</button>`).join('');document.body.appendChild(menu);
+  function applyScale(){
+    for(const [el,base] of bases)if(el.isConnected&&!el.closest('.ui-scale-menu'))el.style.fontSize=(base*currentScale).toFixed(2)+'px';
+    if(scaleBtn){scaleBtn.dataset.scale=Math.round(currentScale*100)+'%';scaleBtn.title=`UI scale · ${Math.round(currentScale*100)}%`}
+  }
   function setScale(v){currentScale=v;localStorage.setItem(SCALE_KEY,String(v));menu.querySelectorAll('button').forEach(b=>b.classList.toggle('active',Number(b.dataset.uiScale)===v));applyScale()}
-  const mo=new MutationObserver(rs=>{for(const r of rs)for(const n of r.addedNodes)if(n instanceof HTMLElement){const els=snapshot(n);for(const el of els){const b=bases.get(el);if(b)el.style.fontSize=(b*currentScale).toFixed(2)+'px'}}});mo.observe(document.body,{childList:true,subtree:true});
   menu.addEventListener('click',e=>{const b=e.target.closest('[data-ui-scale]');if(!b)return;setScale(Number(b.dataset.uiScale));menu.classList.remove('open')});scaleBtn?.addEventListener('click',e=>{e.stopPropagation();menu.classList.toggle('open')});document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target!==scaleBtn)menu.classList.remove('open')});setScale(currentScale);
 
   // SPACE canvas text uses px fonts in spatial_os.js. Scale only the font
