@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.2.1'
+        description: 'Release version, e.g. v0.3.0'
         required: true
-        default: 'v0.2.1'
+        default: 'v0.3.0'
 
 permissions:
   contents: write
@@ -38,12 +38,11 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.2.1' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.0' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           architecture: ${{ matrix.python_arch }}
@@ -58,7 +57,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r skills_apocalypse/desktop-requirements.txt
           choco install innosetup -y --no-progress
-
       - name: Build desktop executable
         shell: pwsh
         run: |
@@ -72,37 +70,27 @@ jobs:
             --hidden-import clr `
             --hidden-import anthropic `
             --hidden-import app_lifecycle `
+            --hidden-import onboarding `
+            --hidden-import agent_discovery `
             --add-data "skills_apocalypse/spatial_os.html;." `
             --add-data "skills_apocalypse/spatial_os.css;." `
             --add-data "skills_apocalypse/spatial_os.js;." `
-            --add-data "skills_apocalypse/dashboard.html;." `
+            --add-data "skills_apocalypse/onboarding_ui.js;." `
             skills_apocalypse/desktop_app.py
-
-          pyinstaller `
-            --noconfirm `
-            --clean `
-            --onefile `
-            --console `
-            --name ApocalypseSetup `
-            skills_apocalypse/setup_wizard.py
-
       - name: Verify executable architecture
         shell: pwsh
         env:
           EXPECTED_MACHINE: ${{ matrix.pe_machine }}
         run: |
-          foreach ($name in @('Apocalypse.exe','ApocalypseSetup.exe')) {
-            $path = Resolve-Path (Join-Path 'dist' $name)
-            $bytes = [System.IO.File]::ReadAllBytes($path)
-            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$name missing MZ PE header" }
-            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE, 16)
-            Write-Host ("$name PE machine: 0x{0:X4}" -f $machine)
-            if ($machine -ne $expected) { throw "$name has wrong PE architecture" }
-            if ((Get-Item $path).Length -lt 1000000) { throw "$name is unexpectedly small" }
-          }
-
+          $path = Resolve-Path 'dist/Apocalypse.exe'
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'Apocalypse.exe missing MZ PE header' }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE, 16)
+          Write-Host ("Apocalypse.exe PE machine: 0x{0:X4}" -f $machine)
+          if ($machine -ne $expected) { throw 'Apocalypse.exe has wrong PE architecture' }
+          if ((Get-Item $path).Length -lt 1000000) { throw 'Apocalypse.exe is unexpectedly small' }
       - name: Build installer
         shell: pwsh
         env:
@@ -110,7 +98,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $exePath = (Resolve-Path 'dist/Apocalypse.exe').Path
-          $setupExePath = (Resolve-Path 'dist/ApocalypseSetup.exe').Path
           $outputDir = Join-Path $PWD 'installer-dist'
           New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
           $issPath = Join-Path $PWD "Apocalypse-$env:BUILD_ARCH.iss"
@@ -145,13 +132,10 @@ jobs:
             'Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked',
             '', '[Files]',
             "Source: `"$exePath`"; DestDir: `"{app}`"; Flags: ignoreversion",
-            "Source: `"$setupExePath`"; DestDir: `"{app}`"; Flags: ignoreversion",
             '', '[Icons]',
             'Name: "{group}\Apocalypse"; Filename: "{app}\Apocalypse.exe"',
-            'Name: "{group}\Configure Apocalypse"; Filename: "{app}\ApocalypseSetup.exe"',
             'Name: "{autodesktop}\Apocalypse"; Filename: "{app}\Apocalypse.exe"; Tasks: desktopicon',
             '', '[Run]',
-            'Filename: "{app}\ApocalypseSetup.exe"; Description: "Discover agents, choose Plan usage and analysis model"; Flags: postinstall skipifsilent',
             'Filename: "{app}\Apocalypse.exe"; Description: "Launch Apocalypse"; Flags: nowait postinstall skipifsilent'
           )
           $lines | Set-Content -Path $issPath -Encoding UTF8
@@ -159,9 +143,6 @@ jobs:
           if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler not found' }
           & $iscc $issPath
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
-          $setup = Join-Path $outputDir "Apocalypse-Setup-$env:BUILD_ARCH.exe"
-          if (-not (Test-Path $setup)) { throw 'Installer was not created' }
-
       - name: Smoke-test silent install
         shell: pwsh
         env:
@@ -171,12 +152,9 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP "Apocalypse-$env:BUILD_ARCH-test"
           $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$target" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "Silent installer test failed: $($proc.ExitCode)" }
-          foreach ($name in @('Apocalypse.exe','ApocalypseSetup.exe')) {
-            if (-not (Test-Path (Join-Path $target $name))) { throw "$name not found after install" }
-          }
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+          if (-not (Test-Path (Join-Path $target 'Apocalypse.exe'))) { throw 'Apocalypse.exe not found after install' }
+          if (Test-Path (Join-Path $target 'ApocalypseSetup.exe')) { throw 'Legacy ApocalypseSetup.exe should not be installed' }
+      - uses: actions/upload-artifact@v4
         with:
           name: Apocalypse-Setup-${{ matrix.arch }}
           path: installer-dist/Apocalypse-Setup-${{ matrix.arch }}.exe
@@ -205,14 +183,13 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          Windows desktop release of Apocalypse Spatial OS.
-
-          - x64 and native x86 installers
-          - standalone WebView2 desktop UI
-          - Agent / Provider / model discovery and reinitialize flow
+          - one-window Spatial OS; legacy dashboard / 3D workspace removed
+          - cinematic in-app first-run onboarding; no console setup companion
+          - local Agent / Provider / model discovery and Plan usage selection
           - Apocalypse-owned analysis harness
-          - Settings-based self-update
-          - Claude Session maintenance tools
+          - Settings-based reinitialize and self-update
+          - Claude Session CLEAN NON-TEXT and REPAIR JSONL maintenance
+          - x64 and native x86 installers
 
           These installers are unsigned, so Windows SmartScreen may warn on first launch.
           EOF
