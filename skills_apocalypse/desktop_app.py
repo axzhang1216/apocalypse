@@ -25,7 +25,9 @@ if str(BASE) not in sys.path:
 import server as legacy  # noqa: E402
 import spatial_server_plus as spatial  # noqa: E402
 
-URL = f"http://127.0.0.1:{spatial.PORT}"
+# Keep the exact same origin as the standalone/browser launcher so UI
+# preferences (for example apocalypse.uiScale.v2) share one localStorage.
+URL = f"http://localhost:{spatial.PORT}"
 
 
 def _spatial_alive(timeout: float = 0.7) -> bool:
