@@ -23,7 +23,7 @@ if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 
 import server as legacy  # noqa: E402
-import spatial_server as spatial  # noqa: E402
+import spatial_server_plus as spatial  # noqa: E402
 
 URL = f"http://127.0.0.1:{spatial.PORT}"
 
@@ -51,8 +51,6 @@ def _start_embedded_server():
     if _spatial_alive():
         return None
     if _port_is_apocalypse():
-        # A legacy Apocalypse server is already using the port. The standalone
-        # launcher can upgrade it; the desktop shell avoids killing processes.
         raise RuntimeError(
             "Apocalypse legacy server is already running on port 7749. "
             "Stop it first, then reopen Apocalypse.exe."
@@ -96,8 +94,6 @@ def main() -> int:
     try:
         srv = _start_embedded_server()
     except Exception as exc:
-        # A native error window is preferable to a console because the EXE is
-        # built with --windowed.
         webview.create_window(
             "Apocalypse — Startup Error",
             html=(
@@ -124,15 +120,12 @@ def main() -> int:
     )
 
     def _after_start(win):
-        # Make the app feel like a desktop workspace rather than a browser tab.
         try:
             win.maximize()
         except Exception:
             pass
 
     try:
-        # On Windows, pywebview resolves to Edge Chromium / WebView2. This is a
-        # native application window; no browser tab is opened.
         webview.start(_after_start, window, gui="edgechromium", debug=False, private_mode=False)
     finally:
         _cleanup_server(srv)
