@@ -3,7 +3,6 @@
 from __future__ import annotations
 import json, os, re, subprocess, urllib.error, urllib.request
 from pathlib import Path
-from typing import Any
 
 DATA_DIR=Path.home()/".claude"/"apocalypse";CONFIG_FILE=DATA_DIR/"harness.json"
 class HarnessError(RuntimeError):pass
@@ -111,14 +110,12 @@ def _codex(c,prompt,system,timeout):
  return _run(args+["-"],full,timeout)
 
 def _hermes(c,prompt,system,timeout):
- """Hermes documents `-z` as pure one-shot: final answer only."""
- full=prompt if not system else system+"\n\n"+prompt;args=[str(c.get("executable") or "hermes"),"-z"]
+ full=prompt if not system else system+"\n\n"+prompt
+ args=[str(c.get("executable") or "hermes"),"chat","--oneshot","--quiet","--query-file","-"]
  provider=c.get("provider_override");model=c.get("model")
  if provider and provider!="auto":args += ["--provider",str(provider)]
  if model and model!="(Hermes default)":args += ["--model",str(model)]
- # `-z` takes the prompt argument. Use stdin only for the model-independent wrappers.
- args += [full]
- return _run(args,"",timeout)
+ return _run(args,full,timeout)
 
 def complete(prompt,*,max_tokens=1024,system=None,timeout=120.0,model_override=None):
  c=model_config()
