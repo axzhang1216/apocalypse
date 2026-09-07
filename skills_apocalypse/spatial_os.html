@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Apocalypse Spatial OS</title>
 <link rel="stylesheet" href="/spatial_os.css">
+<link rel="stylesheet" href="/spatial_os_patch.css">
 </head>
 <body>
 <canvas id="stars"></canvas><div class="cursor-orb" id="cursorOrb"></div>
@@ -13,6 +14,7 @@
     <div class="brand"><i></i>APOCALYPSE <small>/ SPATIAL OS</small></div>
     <div class="tabs"><button id="spaceTab" class="active signal-text">SPACE</button><button id="opsTab" class="signal-text">OPS</button></div>
     <div class="spacer"></div>
+    <button class="ghost scale-control signal-text" id="scaleBtn" title="UI scale">Aa</button>
     <button class="ghost signal-text" id="searchBtn">⌕</button><button class="ghost" id="homeBtn">⌂</button>
   </div>
   <div class="bottom"><div class="shortcut"><kbd>⌘ K</kbd> search</div><div class="trail" id="trail"><b>WORKSPACE</b> / semantic universe</div><div class="run-dock" id="runDock"><i></i><span id="runText">SYNCING RUN STATE…</span></div></div>
@@ -74,4 +76,5 @@
 <div class="search" id="search"><div class="searchbox"><input id="searchInput" placeholder="Search project, session, decision, plan, agent, file…"><div class="results" id="results"></div></div></div>
 
 <script src="/spatial_os.js"></script>
+<script src="/spatial_os_patch.js"></script>
 </body></html>
