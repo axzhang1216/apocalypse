@@ -6,7 +6,7 @@
 <title>Apocalypse Spatial OS</title>
 <link rel="stylesheet" href="/spatial_os.css">
 <style>
-:root{--apocalypse-ui-scale:1.15}.scale-control{position:relative;width:38px!important;font-weight:600;letter-spacing:-.04em}.ui-scale-menu{position:fixed;z-index:55;top:51px;right:52px;display:none;align-items:center;gap:3px;padding:5px;border:1px solid var(--hair);border-radius:10px;background:rgba(13,18,25,.96);box-shadow:0 16px 45px rgba(0,0,0,.35)}.ui-scale-menu.open{display:flex}.ui-scale-menu button{min-width:42px;height:30px;padding:0 7px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--mute);font:9px Consolas,monospace;cursor:pointer}.ui-scale-menu button:hover{background:rgba(255,255,255,.04);color:var(--ink)}.ui-scale-menu button.active{border-color:rgba(111,148,184,.3);background:rgba(111,148,184,.1);color:var(--ink);box-shadow:0 0 16px rgba(111,148,184,.07)}.scale-control[data-scale]:after{content:attr(data-scale);position:absolute;right:-5px;bottom:-4px;padding:1px 3px;border-radius:4px;background:#111821;color:var(--cyan);font:7px Consolas,monospace;letter-spacing:0}.space-back-hint{position:fixed;left:50%;bottom:56px;z-index:8;pointer-events:none;opacity:0;transform:translate(-50%,8px);transition:opacity .25s,transform .25s;padding:5px 9px;border:1px solid rgba(255,255,255,.05);border-radius:7px;background:rgba(11,16,22,.42);color:rgba(184,189,194,.7);font:9px Consolas,monospace;letter-spacing:.07em}.space-back-hint.show{opacity:1;transform:translate(-50%,0)}
+.scale-control{position:relative;width:38px!important;font-weight:600;letter-spacing:-.04em}.ui-scale-menu{position:fixed;z-index:55;top:51px;right:52px;display:none;align-items:center;gap:3px;padding:5px;border:1px solid var(--hair);border-radius:10px;background:rgba(13,18,25,.96);box-shadow:0 16px 45px rgba(0,0,0,.35)}.ui-scale-menu.open{display:flex}.ui-scale-menu button{min-width:42px;height:30px;padding:0 7px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--mute);font:9px Consolas,monospace;cursor:pointer}.ui-scale-menu button:hover{background:rgba(255,255,255,.04);color:var(--ink)}.ui-scale-menu button.active{border-color:rgba(111,148,184,.3);background:rgba(111,148,184,.1);color:var(--ink);box-shadow:0 0 16px rgba(111,148,184,.07)}.scale-control[data-scale]:after{content:attr(data-scale);position:absolute;right:-5px;bottom:-4px;padding:1px 3px;border-radius:4px;background:#111821;color:var(--cyan);font:7px Consolas,monospace;letter-spacing:0}.space-back-hint{position:fixed;left:50%;bottom:56px;z-index:8;pointer-events:none;opacity:0;transform:translate(-50%,8px);transition:opacity .25s,transform .25s;padding:5px 9px;border:1px solid rgba(255,255,255,.05);border-radius:7px;background:rgba(11,16,22,.42);color:rgba(184,189,194,.7);font:9px Consolas,monospace;letter-spacing:.07em}.space-back-hint.show{opacity:1;transform:translate(-50%,0)}.repair-status{margin-top:8px;font:9px/1.5 Consolas,monospace;color:var(--mute)}.repair-status.ok{color:var(--cyan)}.repair-status.err{color:var(--pink)}
 </style>
 </head>
 <body>
@@ -38,16 +38,53 @@
 <script src="/spatial_os.js"></script>
 <script>
 (()=>{
-  const SCALE_KEY='apocalypse.uiScale',STEPS=[1,1.15,1.3,1.45],root=document.documentElement,scaleBtn=document.getElementById('scaleBtn'),universe=document.getElementById('universe');let currentScale=Number(localStorage.getItem(SCALE_KEY)||1.15);if(!STEPS.includes(currentScale))currentScale=1.15;
-  const baseline=new WeakMap();function scaleElement(el){if(!(el instanceof HTMLElement)||el.closest('.ui-scale-menu'))return;let base=baseline.get(el);if(!base){const fs=parseFloat(getComputedStyle(el).fontSize);if(!Number.isFinite(fs)||fs<=0)return;base=fs;baseline.set(el,base)}el.style.fontSize=(base*currentScale).toFixed(2)+'px'}
-  function scaleDom(){document.querySelectorAll('body *').forEach(scaleElement);if(scaleBtn){scaleBtn.dataset.scale=Math.round(currentScale*100)+'%';scaleBtn.title=`UI scale · ${Math.round(currentScale*100)}%`}}
-  new MutationObserver(rs=>{for(const r of rs)for(const n of r.addedNodes){if(!(n instanceof HTMLElement))continue;scaleElement(n);n.querySelectorAll?.('*').forEach(scaleElement)}}).observe(document.body,{childList:true,subtree:true});
-  try{if(typeof ctx!=='undefined'&&ctx){const proto=Object.getPrototypeOf(ctx),desc=Object.getOwnPropertyDescriptor(proto,'font');if(desc?.get&&desc?.set)Object.defineProperty(ctx,'font',{configurable:true,get(){return desc.get.call(ctx)},set(v){desc.set.call(ctx,String(v).replace(/([0-9]*\.?[0-9]+)px/g,(_,n)=>`${(parseFloat(n)*currentScale).toFixed(2)}px`))}})}}catch(e){console.warn('Canvas font scaling unavailable',e)}
+  const SCALE_KEY='apocalypse.uiScale.v2',STEPS=[1,1.15,1.3,1.45],scaleBtn=document.getElementById('scaleBtn'),universe=document.getElementById('universe');
+  let currentScale=Number(localStorage.getItem(SCALE_KEY)||1.15);if(!STEPS.includes(currentScale))currentScale=1.15;
+  const bases=new WeakMap();
+  function eligible(el){return el instanceof HTMLElement&&!el.closest('.ui-scale-menu')&&!el.matches('canvas,svg,path,line,polyline,polygon')}
+  function snapshot(root=document.body){
+    const els=[root,...root.querySelectorAll('*')].filter(eligible);
+    // Critical: capture every computed size BEFORE changing any element. This
+    // prevents inherited descendants from receiving scale twice.
+    const vals=els.map(el=>[el,parseFloat(getComputedStyle(el).fontSize)]);
+    for(const [el,fs] of vals)if(Number.isFinite(fs)&&fs>0&&!bases.has(el))bases.set(el,fs);
+    return els;
+  }
+  function applyScale(root=document.body){for(const el of snapshot(root)){const b=bases.get(el);if(b)el.style.fontSize=(b*currentScale).toFixed(2)+'px'}if(scaleBtn){scaleBtn.dataset.scale=Math.round(currentScale*100)+'%';scaleBtn.title=`UI scale · ${Math.round(currentScale*100)}%`}}
+  // Snapshot the initial DOM at its untouched CSS sizes before any 115% scale.
+  snapshot();
   const menu=document.createElement('div');menu.className='ui-scale-menu';menu.innerHTML=STEPS.map(v=>`<button data-ui-scale="${v}">${Math.round(v*100)}%</button>`).join('');document.body.appendChild(menu);
-  function setScale(v){currentScale=v;root.style.setProperty('--apocalypse-ui-scale',v);localStorage.setItem(SCALE_KEY,String(v));menu.querySelectorAll('button').forEach(b=>b.classList.toggle('active',Number(b.dataset.uiScale)===v));scaleDom()}
+  function setScale(v){currentScale=v;localStorage.setItem(SCALE_KEY,String(v));menu.querySelectorAll('button').forEach(b=>b.classList.toggle('active',Number(b.dataset.uiScale)===v));applyScale()}
+  const mo=new MutationObserver(rs=>{for(const r of rs)for(const n of r.addedNodes)if(n instanceof HTMLElement){const els=snapshot(n);for(const el of els){const b=bases.get(el);if(b)el.style.fontSize=(b*currentScale).toFixed(2)+'px'}}});mo.observe(document.body,{childList:true,subtree:true});
   menu.addEventListener('click',e=>{const b=e.target.closest('[data-ui-scale]');if(!b)return;setScale(Number(b.dataset.uiScale));menu.classList.remove('open')});scaleBtn?.addEventListener('click',e=>{e.stopPropagation();menu.classList.toggle('open')});document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target!==scaleBtn)menu.classList.remove('open')});setScale(currentScale);
+
+  // SPACE canvas text uses px fonts in spatial_os.js. Scale only the font
+  // assignment, never canvas geometry or pointer coordinates.
+  try{if(typeof ctx!=='undefined'&&ctx){const proto=Object.getPrototypeOf(ctx),desc=Object.getOwnPropertyDescriptor(proto,'font');if(desc?.get&&desc?.set)Object.defineProperty(ctx,'font',{configurable:true,get(){return desc.get.call(ctx)},set(v){desc.set.call(ctx,String(v).replace(/([0-9]*\.?[0-9]+)px/g,(_,n)=>`${(parseFloat(n)*currentScale).toFixed(2)}px`))}})}}catch(e){console.warn('Canvas font scaling unavailable',e)}
+
   let down=null;const hint=document.createElement('div');hint.className='space-back-hint';hint.textContent='CLICK OUTSIDE · ALL PROJECTS';document.body.appendChild(hint);
-  universe?.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY}},true);universe?.addEventListener('pointermove',e=>{try{if(typeof focus!=='undefined'&&focus&&typeof hit==='function'){const empty=!hit(e.clientX,e.clientY);hint.classList.toggle('show',empty&&!down);universe.style.cursor=empty?'zoom-out':''}else{hint.classList.remove('show');universe.style.cursor=''}}catch{}});universe?.addEventListener('pointerleave',()=>{hint.classList.remove('show');universe.style.cursor=''});universe?.addEventListener('pointerup',e=>{const start=down;down=null;if(!start||Math.hypot(e.clientX-start.x,e.clientY-start.y)>5)return;try{if(typeof focus==='undefined'||!focus||typeof hit!=='function'||typeof clearFocus!=='function'||hit(e.clientX,e.clientY))return;clearFocus();hint.classList.remove('show');universe.style.cursor=''}catch(err){console.warn('Outer-space back navigation unavailable',err)}})
+  universe?.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY}},true);universe?.addEventListener('pointermove',e=>{try{if(typeof focus!=='undefined'&&focus&&typeof hit==='function'){const empty=!hit(e.clientX,e.clientY);hint.classList.toggle('show',empty&&!down);universe.style.cursor=empty?'zoom-out':''}else{hint.classList.remove('show');universe.style.cursor=''}}catch{}});universe?.addEventListener('pointerleave',()=>{hint.classList.remove('show');universe.style.cursor=''});universe?.addEventListener('pointerup',e=>{const start=down;down=null;if(!start||Math.hypot(e.clientX-start.x,e.clientY-start.y)>5)return;try{if(typeof focus==='undefined'||!focus||typeof hit!=='function'||typeof clearFocus!=='function'||hit(e.clientX,e.clientY))return;clearFocus();hint.classList.remove('show');universe.style.cursor=''}catch(err){console.warn('Outer-space back navigation unavailable',err)}});
+
+  // Add the historical "repair conversation" capability to Claude session
+  // inspectors. The backend refuses live sessions, creates a backup, then
+  // atomically removes malformed JSONL records.
+  const inspectorBody=document.getElementById('inspectorBody');
+  function injectRepair(){
+    try{
+      if(typeof selected==='undefined'||!selected||typeof WORLD==='undefined'||!WORLD)return;
+      const o=WORLD.objects.find(x=>x.id===selected);if(!o||o.type!=='session'||o.provider==='codex'||!o.session_id)return;
+      const actions=inspectorBody.querySelector('.inspect-actions');if(!actions||actions.querySelector('[data-repair-session]'))return;
+      const b=document.createElement('button');b.dataset.repairSession=o.session_id;b.textContent='REPAIR CONVERSATION';b.title='Back up the Claude JSONL transcript, remove malformed records, and atomically replace it';actions.appendChild(b);
+    }catch{}
+  }
+  new MutationObserver(injectRepair).observe(inspectorBody,{childList:true,subtree:true});
+  inspectorBody.addEventListener('click',async e=>{
+    const b=e.target.closest('[data-repair-session]');if(!b)return;e.preventDefault();e.stopPropagation();
+    const sid=b.dataset.repairSession;if(!sid)return;
+    if(!confirm('Repair this Claude conversation?\n\nApocalypse will first back up the original JSONL, then remove malformed JSON records. Active Claude sessions are refused.'))return;
+    b.disabled=true;const old=b.textContent;b.textContent='REPAIRING…';let status=inspectorBody.querySelector('.repair-status');if(!status){status=document.createElement('div');status.className='repair-status';b.parentElement.insertAdjacentElement('afterend',status)}
+    try{const r=await fetch(`/api/sessions2/${encodeURIComponent(sid)}/repair`,{method:'POST'});const j=await r.json();if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);status.className='repair-status ok';status.textContent=j.changed?`REPAIRED · removed ${j.removed_records} malformed record(s) · backup: ${j.backup}`:'CHECKED · conversation file is already valid';b.textContent=j.changed?'REPAIRED':'VALID'}catch(err){status.className='repair-status err';status.textContent='REPAIR FAILED · '+err.message;b.textContent=old;b.disabled=false}
+  });
 })();
 </script>
 </body></html>
