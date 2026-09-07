@@ -27,23 +27,18 @@ jobs:
             python_arch: x86
             expected_bits: '32'
             pe_machine: '014c'
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           architecture: ${{ matrix.python_arch }}
-
       - name: Verify Python architecture
         shell: pwsh
         env:
           EXPECTED_BITS: ${{ matrix.expected_bits }}
-        run: |
-          python -c "import os, struct; bits=str(struct.calcsize('P')*8); print('Python bits:', bits); assert bits == os.environ['EXPECTED_BITS']"
-
+        run: python -c "import os, struct; bits=str(struct.calcsize('P')*8); print('Python bits:', bits); assert bits == os.environ['EXPECTED_BITS']"
       - name: Install build dependencies
         shell: pwsh
         run: |
@@ -62,26 +57,38 @@ jobs:
             --name Apocalypse `
             --collect-all webview `
             --hidden-import clr `
+            --hidden-import anthropic `
             --add-data "skills_apocalypse/spatial_os.html;." `
             --add-data "skills_apocalypse/spatial_os.css;." `
             --add-data "skills_apocalypse/spatial_os.js;." `
             --add-data "skills_apocalypse/dashboard.html;." `
             skills_apocalypse/desktop_app.py
 
+          # Console companion owns first-run questions and can be relaunched later.
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --console `
+            --name ApocalypseSetup `
+            skills_apocalypse/setup_wizard.py
+
       - name: Verify executable architecture
         shell: pwsh
         env:
           EXPECTED_MACHINE: ${{ matrix.pe_machine }}
         run: |
-          $path = Resolve-Path 'dist/Apocalypse.exe'
-          $bytes = [System.IO.File]::ReadAllBytes($path)
-          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'Missing MZ PE header' }
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE, 16)
-          Write-Host ('PE machine: 0x{0:X4}' -f $machine)
-          if ($machine -ne $expected) { throw 'Wrong PE architecture' }
-          if ((Get-Item $path).Length -lt 1000000) { throw 'Apocalypse.exe is unexpectedly small' }
+          foreach ($name in @('Apocalypse.exe','ApocalypseSetup.exe')) {
+            $path = Resolve-Path (Join-Path 'dist' $name)
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "$name missing MZ PE header" }
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE, 16)
+            Write-Host ("$name PE machine: 0x{0:X4}" -f $machine)
+            if ($machine -ne $expected) { throw "$name has wrong PE architecture" }
+            if ((Get-Item $path).Length -lt 1000000) { throw "$name is unexpectedly small" }
+          }
 
       - name: Build installer
         shell: pwsh
@@ -90,10 +97,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $exePath = (Resolve-Path 'dist/Apocalypse.exe').Path
+          $setupExePath = (Resolve-Path 'dist/ApocalypseSetup.exe').Path
           $outputDir = Join-Path $PWD 'installer-dist'
           New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
           $issPath = Join-Path $PWD "Apocalypse-$env:BUILD_ARCH.iss"
-
           $lines = @(
             '[Setup]',
             'AppId={{4D4A62DD-586F-471A-8B99-6B18C0596501}',
@@ -116,41 +123,31 @@ jobs:
             'CloseApplications=yes',
             'RestartApplications=no'
           )
-
           if ($env:BUILD_ARCH -eq 'x64') {
             $lines += 'ArchitecturesAllowed=x64compatible'
             $lines += 'ArchitecturesInstallIn64BitMode=x64compatible'
-          } else {
-            $lines += 'ArchitecturesAllowed=x86compatible'
-          }
-
+          } else { $lines += 'ArchitecturesAllowed=x86compatible' }
           $lines += @(
-            '',
-            '[Tasks]',
+            '', '[Tasks]',
             'Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked',
-            '',
-            '[Files]',
+            '', '[Files]',
             "Source: `"$exePath`"; DestDir: `"{app}`"; Flags: ignoreversion",
-            '',
-            '[Icons]',
+            "Source: `"$setupExePath`"; DestDir: `"{app}`"; Flags: ignoreversion",
+            '', '[Icons]',
             'Name: "{group}\Apocalypse"; Filename: "{app}\Apocalypse.exe"',
+            'Name: "{group}\Configure Apocalypse"; Filename: "{app}\ApocalypseSetup.exe"',
             'Name: "{autodesktop}\Apocalypse"; Filename: "{app}\Apocalypse.exe"; Tasks: desktopicon',
-            '',
-            '[Run]',
+            '', '[Run]',
+            'Filename: "{app}\ApocalypseSetup.exe"; Description: "Discover agents, choose Plan usage and analysis model"; Flags: postinstall skipifsilent',
             'Filename: "{app}\Apocalypse.exe"; Description: "Launch Apocalypse"; Flags: nowait postinstall skipifsilent'
           )
-
           $lines | Set-Content -Path $issPath -Encoding UTF8
-          Get-Content $issPath
-
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler not found' }
           & $iscc $issPath
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
-
           $setup = Join-Path $outputDir "Apocalypse-Setup-$env:BUILD_ARCH.exe"
           if (-not (Test-Path $setup)) { throw 'Installer was not created' }
-          Get-Item $setup | Format-List Name,Length,LastWriteTime
 
       - name: Smoke-test silent install
         shell: pwsh
@@ -161,7 +158,9 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP "Apocalypse-$env:BUILD_ARCH-test"
           $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$target" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "Silent installer test failed: $($proc.ExitCode)" }
-          if (-not (Test-Path (Join-Path $target 'Apocalypse.exe'))) { throw 'Installed executable not found' }
+          foreach ($name in @('Apocalypse.exe','ApocalypseSetup.exe')) {
+            if (-not (Test-Path (Join-Path $target $name))) { throw "$name not found after install" }
+          }
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -182,38 +181,32 @@ jobs:
           pattern: Apocalypse-Setup-*
           path: release-assets
           merge-multiple: true
-
       - name: Create checksums
         shell: bash
         run: |
           cd release-assets
           sha256sum Apocalypse-Setup-x64.exe Apocalypse-Setup-x86.exe > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
       - name: Create release
         shell: bash
         run: |
           cat > release-notes.md <<'EOF'
           ## Apocalypse v0.1.0
 
-          First Windows desktop release of Apocalypse Spatial OS.
+          Windows desktop release of Apocalypse Spatial OS.
 
-          - **Apocalypse-Setup-x64.exe** — recommended for standard 64-bit Windows 10/11.
-          - **Apocalypse-Setup-x86.exe** — native 32-bit build for x86 Windows environments.
-          - **SHA256SUMS.txt** — checksums for both installers.
+          - x64 and native x86 installers
+          - standalone WebView2 desktop UI
+          - first-run agent/provider discovery
+          - interactive selection of LLM QUOTA Plans
+          - configurable Apocalypse analysis model/harness
+          - cached schedule and agent worklog analysis
 
-          Apocalypse runs in a standalone desktop window and embeds its local server. The UI is rendered through Microsoft Edge WebView2 rather than opening a browser tab.
+          The installer now includes **Configure Apocalypse**, a console setup companion that scans existing local agents and generates Apocalypse-owned runtime configuration without modifying those agents.
 
           These installers are currently unsigned, so Windows SmartScreen may warn on first launch.
           EOF
-
           if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$RELEASE_VERSION" release-assets/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "Apocalypse $RELEASE_VERSION" \
-              --notes-file release-notes.md \
-              --latest
+            gh release create "$RELEASE_VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Apocalypse $RELEASE_VERSION" --notes-file release-notes.md --latest
           fi
