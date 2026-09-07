@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Apocalypse install script
 # Usage: bash install.sh
-# Installs the standalone UI, provider discovery/setup, and analysis harness.
+# Installs the standalone UI, provider discovery/setup, analysis harness, and lifecycle tools.
 set -e
 
 DEST="$HOME/.claude/skills/apocalypse"
@@ -21,7 +21,7 @@ mkdir -p "$DEST/hooks"
 for f in SKILL.md server.py spatial_server.py spatial_server_plus.py spatial_os.html spatial_os.css spatial_os.js \
          apocalypse_ui.py apocalypse-ui apocalypse-ui.cmd dashboard.html start.sh workspace.html workspace_init.py \
          apocalypse.py codex_workspace.py platform_utils.py quota_adapters.py agent_discovery.py analysis_harness.py \
-         setup_wizard.py ops_analysis.py anthropic.py; do
+         setup_wizard.py ops_analysis.py app_lifecycle.py anthropic.py; do
     cp "$REPO_DIR/$f" "$DEST/$f"
 done
 cp "$REPO_DIR/hooks/on-tool.sh" "$DEST/hooks/on-tool.sh"
@@ -55,7 +55,13 @@ fi
 SHELL_NAME=""
 case "$SHELL" in */zsh) SHELL_NAME="zsh";; */bash) SHELL_NAME="bash";; */fish) SHELL_NAME="fish";;
 *) [ "$PLATFORM" = "macos" ] && SHELL_NAME="zsh"; [ "$PLATFORM" = "linux" ] && SHELL_NAME="bash";; esac
-write_alias(){ local rc="$1" line="$2" marker="$3"; [ -z "$rc" ] || [ -z "$line" ] && return 0; if [ -f "$rc" ] && grep -qF "$marker" "$rc" 2>/dev/null; then return 0; fi; mkdir -p "$(dirname "$rc")"; touch "$rc"; printf '\n# Apocalypse launcher\n%s\n' "$line" >> "$rc"; }
+write_alias(){
+    local rc="$1" line="$2" marker="$3"
+    if [ -z "$rc" ] || [ -z "$line" ]; then return 0; fi
+    if [ -f "$rc" ] && grep -qF "$marker" "$rc" 2>/dev/null; then return 0; fi
+    mkdir -p "$(dirname "$rc")"; touch "$rc"
+    printf '\n# Apocalypse launcher\n%s\n' "$line" >> "$rc"
+}
 if [ "$PLATFORM" = "windows" ]; then
     write_alias "$HOME/.bashrc" "alias apocalypse='PYTHONUTF8=1 $PY \"\$HOME/.claude/skills/apocalypse/apocalypse.py\"'" '.claude/skills/apocalypse/apocalypse.py'
 else
@@ -68,8 +74,11 @@ fi
 
 # Claude hooks are optional enrichment; Apocalypse itself remains agent-independent.
 APOCALYPSE_SKILL_DIR="$DEST" "$PY" <<'PYEOF'
-import json, os
+import json, os, shutil
 from pathlib import Path
+# Only touch Claude settings when Claude Code is actually present.
+if not shutil.which('claude'):
+    raise SystemExit(0)
 p=Path.home()/'.claude'/'settings.local.json'; skill=os.environ['APOCALYPSE_SKILL_DIR'].replace('\\','/')
 try: cfg=json.loads(p.read_text('utf-8')) if p.exists() else {}
 except Exception: cfg={}
