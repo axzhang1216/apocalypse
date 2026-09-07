@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Apocalypse Spatial OS server extensions.
 
-Adds mutating maintenance actions that intentionally stay out of the legacy
-read-oriented server. The normal Spatial OS API surface is inherited unchanged.
+Adds mutating maintenance actions and personal plan quota adapters while
+keeping the existing Spatial OS API/UI contracts unchanged.
 """
 from __future__ import annotations
 
@@ -12,12 +12,19 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
+import quota_adapters
 import spatial_server as spatial
 
 PORT = spatial.PORT
 http = spatial.http
 legacy = spatial.legacy
+
+# spatial.ops() resolves its module-global `quotas` function at runtime. Replace
+# that data source once here so both /api/ops and any internal refresh use the
+# same real adapter without changing the existing LLM QUOTA UI contract.
+spatial.quotas = quota_adapters.get_quotas
 
 
 def _pid_alive(pid) -> bool:
@@ -154,6 +161,14 @@ def repair_conversation(session_id: str):
 
 
 class Handler(spatial.Handler):
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/quotas":
+            # Keep the endpoint explicit so consumers can refresh plan capacity
+            # without fetching the rest of OPS. Never return GProxy credentials.
+            return self.send_json(quota_adapters.get_quotas())
+        return super().do_GET()
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         prefix = "/api/sessions2/"
