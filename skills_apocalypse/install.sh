@@ -33,6 +33,7 @@ mkdir -p "$DEST/hooks"
 cp "$REPO_DIR/SKILL.md"               "$DEST/SKILL.md"
 cp "$REPO_DIR/server.py"              "$DEST/server.py"
 cp "$REPO_DIR/spatial_server.py"      "$DEST/spatial_server.py"
+cp "$REPO_DIR/spatial_server_plus.py" "$DEST/spatial_server_plus.py"
 cp "$REPO_DIR/spatial_os.html"        "$DEST/spatial_os.html"
 cp "$REPO_DIR/spatial_os.css"         "$DEST/spatial_os.css"
 cp "$REPO_DIR/spatial_os.js"          "$DEST/spatial_os.js"
@@ -123,8 +124,6 @@ else
 fi
 
 # ── Claude hooks: installation-time integration, not UI startup ─────────────
-# Hooks only enrich live tool events. Apocalypse UI itself can run without
-# Claude Code. Register idempotently when the install environment has ~/.claude.
 APOCALYPSE_SKILL_DIR="$DEST" "$PY" <<'PYEOF'
 import json, os
 from pathlib import Path
