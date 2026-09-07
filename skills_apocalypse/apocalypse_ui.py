@@ -24,7 +24,6 @@ import socket
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -36,7 +35,7 @@ DATA_DIR = Path.home() / ".claude" / "apocalypse"
 PID_FILE = DATA_DIR / "server.pid"
 LOG_FILE = DATA_DIR / "server.log"
 SKILL_DIR = Path(__file__).resolve().parent
-SPATIAL_SERVER = SKILL_DIR / "spatial_server.py"
+SPATIAL_SERVER = SKILL_DIR / "spatial_server_plus.py"
 LEGACY_SERVER = SKILL_DIR / "server.py"
 
 
@@ -72,8 +71,6 @@ def _pid_alive(pid: int | None) -> bool:
     except OSError:
         return False
     except Exception:
-        # Windows can be conservative around os.kill(pid, 0). If the pid file
-        # exists and the Apocalypse port responds, treat it as plausibly alive.
         return _port_open()
 
 
@@ -114,8 +111,6 @@ def print_status() -> int:
 def _terminate_pid(pid: int) -> None:
     try:
         if os.name == "nt":
-            # taskkill handles detached child process groups more reliably than
-            # os.kill on Windows. /T also catches a nested Python launcher.
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T"],
                 stdout=subprocess.DEVNULL,
@@ -172,7 +167,7 @@ def _entrypoint() -> Path:
         return SPATIAL_SERVER
     if LEGACY_SERVER.exists():
         return LEGACY_SERVER
-    raise FileNotFoundError("Neither spatial_server.py nor server.py exists beside apocalypse_ui.py")
+    raise FileNotFoundError("Neither spatial_server_plus.py nor server.py exists beside apocalypse_ui.py")
 
 
 def _spawn_server(entry: Path) -> subprocess.Popen:
