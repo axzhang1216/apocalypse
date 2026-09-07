@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Apocalypse Spatial OS server extensions.
 
-Owns maintenance actions, selected-plan quota adapters, and Apocalypse analysis
-entrypoints while preserving the existing Spatial OS UI contracts.
+Owns maintenance actions, selected-plan quota adapters, settings lifecycle, and
+Apocalypse analysis entrypoints while preserving the existing Spatial OS UI
+contracts.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+import app_lifecycle
 import ops_analysis
 import quota_adapters
 import spatial_server as spatial
@@ -71,7 +73,6 @@ def _maintenance_target(session_id: str):
 
 
 def _atomic_backup_replace(tpath: Path, before, rows: list[bytes], session_id: str, kind: str):
-    """Back up and atomically replace one transcript after a stale-write check."""
     try:
         now = tpath.stat()
         if now.st_size != before.st_size or now.st_mtime_ns != before.st_mtime_ns:
@@ -99,7 +100,6 @@ def _atomic_backup_replace(tpath: Path, before, rows: list[bytes], session_id: s
 
 
 def _invalidate_compact_cache(session_id: str) -> None:
-    """Drop the derived compact cache after mutating a Claude transcript."""
     try:
         ws = legacy._load_workspace()
         if not isinstance(ws, dict): return
@@ -139,15 +139,7 @@ def repair_conversation(session_id: str):
 
 
 def clean_non_text_context(session_id: str):
-    """Make a stopped Claude transcript text-only without breaking its message tree.
-
-    For user/assistant records, only Anthropic `text` content blocks are kept.
-    image, thinking, tool_use, tool_result, document and any future non-text
-    blocks are removed. If a message consisted entirely of non-text blocks, the
-    record itself is retained and receives a short text placeholder so UUID /
-    parentUuid chains remain intact. Malformed JSONL records are repaired at the
-    same time because they cannot be safely transformed.
-    """
+    """Make a stopped Claude transcript text-only while retaining tree records."""
     tpath, error, status = _maintenance_target(session_id)
     if error: return None, error, status
     try:
@@ -162,14 +154,11 @@ def clean_non_text_context(session_id: str):
     total_records = 0
 
     for idx, raw in enumerate(raw_lines, start=1):
-        if not raw.strip():
-            continue
+        if not raw.strip(): continue
         total_records += 1
-        try:
-            record = json.loads(raw.decode("utf-8"))
+        try: record = json.loads(raw.decode("utf-8"))
         except Exception as exc:
-            malformed.append({"line": idx, "error": str(exc)[:160]})
-            continue
+            malformed.append({"line": idx, "error": str(exc)[:160]}); continue
 
         changed = False
         rtype = record.get("type")
@@ -182,10 +171,8 @@ def clean_non_text_context(session_id: str):
                     if isinstance(block, dict) and block.get("type") == "text":
                         text_blocks.append(block)
                     elif isinstance(block, str):
-                        if block:
-                            text_blocks.append({"type": "text", "text": block})
-                        changed = True
-                        removed_types["raw_string_block"] += 1
+                        if block: text_blocks.append({"type": "text", "text": block})
+                        changed = True; removed_types["raw_string_block"] += 1
                     else:
                         changed = True
                         btype = block.get("type") if isinstance(block, dict) else type(block).__name__
@@ -206,10 +193,7 @@ def clean_non_text_context(session_id: str):
                 message["content"] = "[non-text context removed by Apocalypse]"
                 changed = True; touched_messages += 1; placeholder_messages += 1
 
-        if changed:
-            out.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        else:
-            out.append(raw)
+        out.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8") if changed else raw)
 
     removed_blocks = sum(removed_types.values())
     changed = bool(removed_blocks or malformed)
@@ -221,20 +205,11 @@ def clean_non_text_context(session_id: str):
     backup, error, status = _atomic_backup_replace(tpath, before, out, session_id, "text-only")
     if error: return None, error, status
     _invalidate_compact_cache(session_id)
-    return {
-        "ok": True,
-        "changed": True,
-        "session_id": session_id,
-        "total_records": total_records,
-        "removed_blocks": removed_blocks,
-        "removed_types": dict(sorted(removed_types.items())),
-        "messages_cleaned": touched_messages,
-        "placeholder_messages": placeholder_messages,
-        "repaired_records": len(malformed),
-        "malformed": malformed[:50],
-        "backup": str(backup),
-        "transcript": str(tpath),
-    }, None, 200
+    return {"ok": True, "changed": True, "session_id": session_id, "total_records": total_records,
+            "removed_blocks": removed_blocks, "removed_types": dict(sorted(removed_types.items())),
+            "messages_cleaned": touched_messages, "placeholder_messages": placeholder_messages,
+            "repaired_records": len(malformed), "malformed": malformed[:50], "backup": str(backup),
+            "transcript": str(tpath)}, None, 200
 
 
 def _cached_analysis():
@@ -243,16 +218,8 @@ def _cached_analysis():
 
 
 def _workspace_update_in_process():
-    """Run the legacy workspace pipeline through the Apocalypse harness.
-
-    Importing workspace_init in-process is important for PyInstaller builds:
-    there is no external workspace_init.py/Python executable to spawn there.
-    Its local `anthropic` compatibility module routes all historical model calls
-    into analysis_harness and therefore the model selected by setup.
-    """
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        workspace_init.run(incremental=True)
+    with contextlib.redirect_stdout(buf): workspace_init.run(incremental=True)
     events = []
     for line in buf.getvalue().splitlines():
         try: events.append(json.loads(line))
@@ -280,10 +247,20 @@ class Handler(spatial.Handler):
         path = urlparse(self.path).path
         if path == "/api/quotas": return self.send_json(quota_adapters.get_quotas())
         if path == "/api/analysis": return self.send_json(_cached_analysis())
+        if path == "/api/settings/status": return self.send_json(app_lifecycle.app_status())
+        if path == "/api/settings/update":
+            try: return self.send_json(app_lifecycle.check_update())
+            except Exception as exc: return self.send_json({"ok": False, "error": str(exc)}, 502)
         return super().do_GET()
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/settings/reinitialize":
+            try: return self.send_json(app_lifecycle.launch_reinitialize())
+            except Exception as exc: return self.send_json({"ok": False, "error": str(exc)}, 500)
+        if path == "/api/settings/update":
+            try: return self.send_json(app_lifecycle.apply_update())
+            except Exception as exc: return self.send_json({"ok": False, "error": str(exc)}, 500)
         if path == "/api/workspace/update":
             try: return self.send_json(_workspace_update_in_process())
             except Exception as exc: return self.send_json({"ok": False, "error": str(exc)}, 500)
