@@ -1,6 +1,0 @@
-{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi can you help me fix a bug"}]},"timestamp":"2026-07-07T10:00:00Z","cwd":"/home/user/project","session_id":"abc123"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Sure, what's the symptom?"},{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls -la","description":"List files"}}]},"timestamp":"2026-07-07T10:00:05Z"}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"file1.txt\nfile2.txt\n","is_error":false}]},"timestamp":"2026-07-07T10:00:06Z"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Found 2 files. Want me to inspect them?"}]},"timestamp":"2026-07-07T10:00:08Z"}
-{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>ignored</local-command-caveat>"},"timestamp":"2026-07-07T10:00:10Z"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","text":"I should ask the user to clarify."},{"type":"text","text":"Do you want me to read both?"}]},"timestamp":"2026-07-07T10:00:12Z"}

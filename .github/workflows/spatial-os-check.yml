@@ -2,7 +2,7 @@ name: Spatial OS checks
 
 on:
   push:
-    branches: [main, feat/spatial-os-integration]
+    branches: [main]
     paths:
       - 'skills_apocalypse/**'
       - '.github/workflows/spatial-os-check.yml'
@@ -30,16 +30,19 @@ jobs:
             skills_apocalypse/spatial_server_plus.py \
             skills_apocalypse/apocalypse_ui.py \
             skills_apocalypse/agent_discovery.py \
-            skills_apocalypse/setup_wizard.py \
+            skills_apocalypse/onboarding.py \
             skills_apocalypse/analysis_harness.py \
             skills_apocalypse/ops_analysis.py \
             skills_apocalypse/quota_adapters.py \
+            skills_apocalypse/app_lifecycle.py \
             skills_apocalypse/anthropic.py
       - name: Discovery smoke test
         run: PYTHONPATH=skills_apocalypse python skills_apocalypse/agent_discovery.py > /tmp/apocalypse-discovery.json
       - name: Spatial bridge tests
         run: python -m unittest skills_apocalypse.tests.test_spatial_server
       - name: JavaScript syntax
-        run: node --check skills_apocalypse/spatial_os.js
+        run: |
+          node --check skills_apocalypse/spatial_os.js
+          node --check skills_apocalypse/onboarding_ui.js
       - name: Shell syntax
-        run: bash -n skills_apocalypse/start.sh skills_apocalypse/install.sh skills_apocalypse/apocalypse-ui
+        run: bash -n skills_apocalypse/install.sh skills_apocalypse/apocalypse-ui
