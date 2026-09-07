@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import threading
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,14 +55,69 @@ def _live_claude_process(session_id: str):
     return None
 
 
-def repair_conversation(session_id: str):
+def _maintenance_target(session_id: str):
     if not session_id or "/" in session_id or "\\" in session_id or session_id.startswith("."):
         return None, "bad id", 400
     tpath = legacy._find_transcript_path(session_id)
-    if not tpath: return None, "session transcript not found", 404
+    if not tpath:
+        return None, "session transcript not found", 404
     live = _live_claude_process(session_id)
     if live:
-        return None, f"session is still open in Claude Code (pid {live['pid']}, status {live['status']}); close/stop it before repair", 409
+        return None, (
+            f"session is still open in Claude Code (pid {live['pid']}, "
+            f"status {live['status']}); close/stop it before maintenance"
+        ), 409
+    return tpath, None, 200
+
+
+def _atomic_backup_replace(tpath: Path, before, rows: list[bytes], session_id: str, kind: str):
+    """Back up and atomically replace one transcript after a stale-write check."""
+    try:
+        now = tpath.stat()
+        if now.st_size != before.st_size or now.st_mtime_ns != before.st_mtime_ns:
+            return None, "transcript changed while being inspected; maintenance aborted", 409
+    except Exception as exc:
+        return None, f"could not re-check transcript: {exc}", 500
+
+    backup_dir = legacy.DATA_DIR / "repair_backups"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = backup_dir / f"{session_id}-{kind}-{stamp}.jsonl"
+    tmp = tpath.with_name(f".{tpath.name}.{kind}-{os.getpid()}.tmp")
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tpath, backup)
+        with open(tmp, "wb") as f:
+            for raw in rows:
+                f.write(raw + b"\n")
+            f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, tpath)
+    except Exception as exc:
+        try: tmp.unlink(missing_ok=True)
+        except Exception: pass
+        return None, f"maintenance write failed: {exc}", 500
+    return backup, None, 200
+
+
+def _invalidate_compact_cache(session_id: str) -> None:
+    """Drop the derived compact cache after mutating a Claude transcript."""
+    try:
+        ws = legacy._load_workspace()
+        if not isinstance(ws, dict): return
+        cache = ws.get("_compact_cache")
+        if not isinstance(cache, dict): return
+        key = f"compact_{session_id}"
+        if key not in cache: return
+        del cache[key]
+        tmp = legacy.WORKSPACE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(ws, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, legacy.WORKSPACE_FILE)
+    except Exception:
+        pass
+
+
+def repair_conversation(session_id: str):
+    tpath, error, status = _maintenance_target(session_id)
+    if error: return None, error, status
     try:
         before = tpath.stat(); raw_lines = tpath.read_bytes().splitlines()
     except Exception as exc: return None, f"could not read transcript: {exc}", 500
@@ -74,26 +130,111 @@ def repair_conversation(session_id: str):
     if not bad:
         return {"ok": True, "changed": False, "session_id": session_id, "total_records": nonempty,
                 "valid_records": len(good), "removed_records": 0, "message": "Conversation file is already valid."}, None, 200
-    try:
-        now = tpath.stat()
-        if now.st_size != before.st_size or now.st_mtime_ns != before.st_mtime_ns:
-            return None, "transcript changed while being inspected; repair aborted", 409
-    except Exception as exc: return None, f"could not re-check transcript: {exc}", 500
-    backup_dir = legacy.DATA_DIR / "repair_backups"; stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    backup = backup_dir / f"{session_id}-{stamp}.jsonl"; tmp = tpath.with_name(f".{tpath.name}.repair-{os.getpid()}.tmp")
-    try:
-        backup_dir.mkdir(parents=True, exist_ok=True); shutil.copy2(tpath, backup)
-        with open(tmp, "wb") as f:
-            for raw in good: f.write(raw + b"\n")
-            f.flush(); os.fsync(f.fileno())
-        os.replace(tmp, tpath)
-    except Exception as exc:
-        try: tmp.unlink(missing_ok=True)
-        except Exception: pass
-        return None, f"repair write failed: {exc}", 500
+    backup, error, status = _atomic_backup_replace(tpath, before, good, session_id, "repair")
+    if error: return None, error, status
+    _invalidate_compact_cache(session_id)
     return {"ok": True, "changed": True, "session_id": session_id, "total_records": nonempty,
             "valid_records": len(good), "removed_records": len(bad), "removed": bad[:50],
             "backup": str(backup), "transcript": str(tpath)}, None, 200
+
+
+def clean_non_text_context(session_id: str):
+    """Make a stopped Claude transcript text-only without breaking its message tree.
+
+    For user/assistant records, only Anthropic `text` content blocks are kept.
+    image, thinking, tool_use, tool_result, document and any future non-text
+    blocks are removed. If a message consisted entirely of non-text blocks, the
+    record itself is retained and receives a short text placeholder so UUID /
+    parentUuid chains remain intact. Malformed JSONL records are repaired at the
+    same time because they cannot be safely transformed.
+    """
+    tpath, error, status = _maintenance_target(session_id)
+    if error: return None, error, status
+    try:
+        before = tpath.stat(); raw_lines = tpath.read_bytes().splitlines()
+    except Exception as exc: return None, f"could not read transcript: {exc}", 500
+
+    out: list[bytes] = []
+    removed_types: Counter[str] = Counter()
+    malformed = []
+    touched_messages = 0
+    placeholder_messages = 0
+    total_records = 0
+
+    for idx, raw in enumerate(raw_lines, start=1):
+        if not raw.strip():
+            continue
+        total_records += 1
+        try:
+            record = json.loads(raw.decode("utf-8"))
+        except Exception as exc:
+            malformed.append({"line": idx, "error": str(exc)[:160]})
+            continue
+
+        changed = False
+        rtype = record.get("type")
+        message = record.get("message")
+        if rtype in ("user", "assistant") and isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                text_blocks = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_blocks.append(block)
+                    elif isinstance(block, str):
+                        if block:
+                            text_blocks.append({"type": "text", "text": block})
+                        changed = True
+                        removed_types["raw_string_block"] += 1
+                    else:
+                        changed = True
+                        btype = block.get("type") if isinstance(block, dict) else type(block).__name__
+                        removed_types[str(btype or "unknown")] += 1
+                if changed:
+                    touched_messages += 1
+                    if not text_blocks:
+                        text_blocks = [{"type": "text", "text": "[non-text context removed by Apocalypse]"}]
+                        placeholder_messages += 1
+                    message["content"] = text_blocks
+            elif isinstance(content, dict):
+                if content.get("type") != "text":
+                    removed_types[str(content.get("type") or "unknown")] += 1
+                    message["content"] = [{"type": "text", "text": "[non-text context removed by Apocalypse]"}]
+                    changed = True; touched_messages += 1; placeholder_messages += 1
+            elif content is not None and not isinstance(content, str):
+                removed_types[type(content).__name__] += 1
+                message["content"] = "[non-text context removed by Apocalypse]"
+                changed = True; touched_messages += 1; placeholder_messages += 1
+
+        if changed:
+            out.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        else:
+            out.append(raw)
+
+    removed_blocks = sum(removed_types.values())
+    changed = bool(removed_blocks or malformed)
+    if not changed:
+        return {"ok": True, "changed": False, "session_id": session_id,
+                "total_records": total_records, "removed_blocks": 0, "removed_types": {},
+                "repaired_records": 0, "message": "No non-text content blocks found."}, None, 200
+
+    backup, error, status = _atomic_backup_replace(tpath, before, out, session_id, "text-only")
+    if error: return None, error, status
+    _invalidate_compact_cache(session_id)
+    return {
+        "ok": True,
+        "changed": True,
+        "session_id": session_id,
+        "total_records": total_records,
+        "removed_blocks": removed_blocks,
+        "removed_types": dict(sorted(removed_types.items())),
+        "messages_cleaned": touched_messages,
+        "placeholder_messages": placeholder_messages,
+        "repaired_records": len(malformed),
+        "malformed": malformed[:50],
+        "backup": str(backup),
+        "transcript": str(tpath),
+    }, None, 200
 
 
 def _cached_analysis():
@@ -149,9 +290,15 @@ class Handler(spatial.Handler):
         if path == "/api/analysis/refresh":
             try: return self.send_json({"ok": True, **ops_analysis.refresh(schedule=True, worklog=True)})
             except Exception as exc: return self.send_json({"ok": False, "error": str(exc)}, 500)
-        prefix, suffix = "/api/sessions2/", "/repair"
-        if path.startswith(prefix) and path.endswith(suffix):
-            session_id = path[len(prefix):-len(suffix)]; payload, error, status = repair_conversation(session_id)
+        prefix = "/api/sessions2/"
+        if path.startswith(prefix) and path.endswith("/clean-context"):
+            session_id = path[len(prefix):-len("/clean-context")]
+            payload, error, status = clean_non_text_context(session_id)
+            if error: return self.send_json({"ok": False, "error": error}, status)
+            return self.send_json(payload, status)
+        if path.startswith(prefix) and path.endswith("/repair"):
+            session_id = path[len(prefix):-len("/repair")]
+            payload, error, status = repair_conversation(session_id)
             if error: return self.send_json({"ok": False, "error": error}, status)
             return self.send_json(payload, status)
         return super().do_POST()
