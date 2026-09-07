@@ -136,6 +136,15 @@
   .pg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg3); border-color: var(--blue); }
   .pg-btn:disabled { opacity: 0.35; cursor: default; }
   .pg-info { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+  /* ── Repair modal ── */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 200; }
+  .modal-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 16px 20px; max-width: 520px; min-width: 320px; }
+  .modal-card h3 { margin: 0 0 10px 0; font-size: 15px; }
+  #repair-modal-body { font-size: 13px; line-height: 1.6; color: var(--text); }
+  #repair-modal-body code { background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .modal-actions .pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -198,6 +207,17 @@
 </div>
 
 <div class="copy-toast" id="toast"></div>
+
+<div id="repair-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <h3>🧹 清理非文本块（严格文本模式）</h3>
+    <div id="repair-modal-body">加载中…</div>
+    <div class="modal-actions">
+      <button class="pg-btn" id="repair-cancel">取消</button>
+      <button class="pg-btn" id="repair-confirm" disabled>确认清理</button>
+    </div>
+  </div>
+</div>
 
 <script>
 let sessions = [];
@@ -301,6 +321,7 @@ function renderSessionList() {
     const actionsCol = isCodex
       ? ''
       : `<div class="actions">
+           <button class="icon-btn" data-act="repair" data-id="${escapeHTML(s.session_id)}" title="清理 non-text 块（仅在 Claude 模型拒收当前会话时使用）">🧹</button>
            <button class="icon-btn danger" data-act="delete" data-id="${escapeHTML(s.session_id)}" title="Delete dashboard record (does NOT touch the original transcript)">🗑</button>
          </div>`;
     return `
@@ -325,6 +346,12 @@ function renderSessionList() {
     b.addEventListener('click', e => {
       e.stopPropagation();
       copyText(b.dataset.id, 'Resume id');
+    });
+  });
+  el.querySelectorAll('[data-act="repair"]').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      openRepairModal(b.dataset.id);
     });
   });
   el.querySelectorAll('[data-act="delete"]').forEach(b => {
@@ -720,6 +747,112 @@ function connectSSE() {
 
 refreshSessions().then(() => {
   connectSSE();
+});
+
+// ── Session repair (non-text block stripping) ──
+let repairState = null;  // { sessionId, mtime, counts, totalBytes, sample }
+
+function openRepairModal(sessionId) {
+  repairState = { sessionId, mtime: null, counts: null, totalBytes: 0, sample: [] };
+  const modal = document.getElementById('repair-modal');
+  document.getElementById('repair-modal-body').textContent = '加载中…';
+  document.getElementById('repair-confirm').disabled = true;
+  document.getElementById('repair-confirm').textContent = '确认清理';
+  modal.style.display = 'flex';
+  fetchRepairPreview();
+}
+
+function closeRepairModal() {
+  document.getElementById('repair-modal').style.display = 'none';
+  repairState = null;
+}
+
+async function fetchRepairPreview() {
+  const body = document.getElementById('repair-modal-body');
+  const confirmBtn = document.getElementById('repair-confirm');
+  // Fresh preview: clear any stale re-preview flag.
+  repairState.needsRePreview = false;
+  try {
+    const r = await fetch(`/api/sessions2/${encodeURIComponent(repairState.sessionId)}/repair/preview`);
+    const j = await r.json();
+    if (!r.ok) {
+      body.innerHTML = `<span style="color: var(--red)">预览失败: ${escapeHTML(j.error || ('HTTP ' + r.status))}</span>`;
+      confirmBtn.disabled = true;
+      return;
+    }
+    repairState.mtime = j.mtime;
+    repairState.counts = j.counts;
+    repairState.totalBytes = j.total_bytes;
+    const c = j.counts;
+    const kb = Math.round(j.total_bytes / 1024);
+    body.innerHTML = `
+      将删除 <code>${c.document}</code> 个 <code>document</code> 块、
+      <code>${c.image}</code> 个 <code>image</code> 块、
+      <code>${c.other_unknown}</code> 个未知块（共 ~${kb} KB）。<br>
+      原文件备份到 <code>${escapeHTML(repairState.sessionId)}.jsonl.bak</code>（已存在则滚动为 <code>.bak.1.&lt;ts&gt;</code>）。<br>
+      <span style="color: var(--yellow)">⚠️ 该会话可能仍在被 Claude 写入。开始前请暂停 Claude 端。</span>
+    `;
+    confirmBtn.disabled = false;
+  } catch (err) {
+    body.innerHTML = `<span style="color: var(--red)">预览失败: ${escapeHTML(err.message)}</span>`;
+    confirmBtn.disabled = true;
+  }
+}
+
+async function confirmRepair() {
+  if (!repairState) return;
+  const body = document.getElementById('repair-modal-body');
+  const confirmBtn = document.getElementById('repair-confirm');
+  const cancelBtn = document.getElementById('repair-cancel');
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  body.innerHTML = '执行中…';
+  try {
+    const r = await fetch(`/api/sessions2/${encodeURIComponent(repairState.sessionId)}/repair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strip_images: true, mtime: repairState.mtime }),
+    });
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      const kb = Math.round((j.replaced_bytes || 0) / 1024);
+      toast(`清理了 ${j.replaced_blocks} 块（~${kb} KB），备份到 ${j.backup_path}`);
+      closeRepairModal();
+      // The SSE onmessage handler refreshes sessions and the selected
+      // transcript; no manual refresh needed here.
+    } else if (j.error === 'mtime_changed') {
+      body.innerHTML = `<span style="color: var(--yellow)">文件已被其他进程修改。请重新预览。</span>`;
+      confirmBtn.textContent = '重新预览';
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      // Set a flag so the permanent listener knows to re-preview
+      // instead of confirming on the next click.
+      repairState.needsRePreview = true;
+    } else {
+      body.innerHTML = `<span style="color: var(--red)">执行失败: ${escapeHTML(j.error || ('HTTP ' + r.status))}</span>`;
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+    }
+  } catch (err) {
+    body.innerHTML = `<span style="color: var(--red)">执行失败: ${escapeHTML(err.message)}</span>`;
+    confirmBtn.disabled = false;
+    cancelBtn.disabled = false;
+  }
+}
+
+document.getElementById('repair-cancel').addEventListener('click', closeRepairModal);
+document.getElementById('repair-confirm').addEventListener('click', async () => {
+  if (repairState.needsRePreview) {
+    repairState.needsRePreview = false;
+    await fetchRepairPreview();
+  } else {
+    await confirmRepair();
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('repair-modal').style.display === 'flex') {
+    closeRepairModal();
+  }
 });
 
 setInterval(() => { if (currentTab === 'claude') refreshSessions(); }, 30000);

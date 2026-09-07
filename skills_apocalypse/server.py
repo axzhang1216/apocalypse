@@ -14,6 +14,7 @@ from pathlib import Path
 # Load platform_utils from the same directory as this script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from platform_utils import launch_in_terminal  # noqa: E402
+import repair as apoc_repair  # noqa: E402
 
 PORT = 7749
 DATA_DIR = Path.home() / ".claude" / "apocalypse"
@@ -1032,6 +1033,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self.send_json({"error": "not found"}, 404)
 
+        elif path.endswith("/repair/preview") and path.startswith("/api/sessions2/"):
+            session_id = path[len("/api/sessions2/"):-len("/repair/preview")]
+            if not session_id or "/" in session_id or "\\" in session_id or session_id.startswith("."):
+                self.send_json({"ok": False, "error": "bad id"}, 400)
+                return
+            tpath = _find_transcript_path(session_id)
+            if not tpath:
+                self.send_json({"ok": False, "error": "transcript not found"}, 404)
+                return
+            try:
+                size = os.stat(tpath).st_size
+            except OSError:
+                self.send_json({"ok": False, "error": "stat failed"}, 500)
+                return
+            if size > apoc_repair.MAX_BYTES:
+                self.send_json({"ok": False, "error": "file too large", "size": size}, 413)
+                return
+            try:
+                res = apoc_repair.scan_for_unsupported(str(tpath), strip_images=True)
+            except Exception as e:  # noqa: BLE001
+                self.send_json({"ok": False, "error": f"scan failed: {e}"}, 500)
+                return
+            res["ok"] = True
+            self.send_json(res)
+
         elif path.endswith("/compact") and path.startswith("/api/sessions2/"):
             # GET /api/sessions2/<id>/compact — filtered + summarized conversation
             session_id = path[len("/api/sessions2/"):-len("/compact")]
@@ -1197,6 +1223,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "cwd": cwd, "cmd": cmd})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 500)
+
+        elif path.endswith("/repair") and path.startswith("/api/sessions2/"):
+            session_id = path[len("/api/sessions2/"):-len("/repair")]
+            if not session_id or "/" in session_id or "\\" in session_id or session_id.startswith("."):
+                self.send_json({"ok": False, "error": "bad id"}, 400)
+                return
+            tpath = _find_transcript_path(session_id)
+            if not tpath:
+                self.send_json({"ok": False, "error": "transcript not found"}, 404)
+                return
+            try:
+                body_len = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(body_len).decode("utf-8") if body_len else ""
+                payload = json.loads(raw) if raw.strip() else {}
+            except Exception:
+                self.send_json({"ok": False, "error": "bad json body"}, 400)
+                return
+            strip_images = bool(payload.get("strip_images", True))
+            mtime_before = payload.get("mtime")
+            if mtime_before is None:
+                self.send_json({"ok": False, "error": "mtime required"}, 400)
+                return
+            lock = apoc_repair.repair_lock_for(session_id)
+            try:
+                res = apoc_repair.repair_transcript(
+                    str(tpath),
+                    strip_images=strip_images,
+                    mtime_before=mtime_before,
+                    lock=lock,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.send_json({"ok": False, "error": f"repair failed: {e}"}, 500)
+                return
+            status = 200 if res.get("ok") else 500
+            if res.get("error") == "mtime_changed":
+                status = 409
+            elif res.get("error") == "file too large":
+                status = 413
+            elif res.get("error") == "transcript not found":
+                status = 404
+            self.send_json(res, status=status)
 
         elif path.startswith("/api/sessions2/") and path.endswith("/export"):
             self._handle_export_post(path, "/api/sessions2/", "/export", "claude")
