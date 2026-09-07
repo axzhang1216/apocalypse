@@ -43,7 +43,7 @@ def _url(base,suffix):
  if not b:raise HarnessError("Selected HTTP analysis provider has no base_url")
  if "://" not in b:b=("http://" if b.startswith("localhost") or re.match(r"^\d+\.\d+\.\d+\.\d+",b) else "https://")+b
  if b.endswith(suffix):return b
- if b.endswith("/v1") and suffix.startswith("/v1/"):return b+suffix[len("/v1"):]
+ if re.search(r"/v\d+$",b) and suffix.startswith("/v1/"):return b+suffix[len("/v1"):]
  return b+suffix
 
 def _post(url,payload,headers,timeout):
