@@ -2,15 +2,20 @@ name: Windows desktop release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. v0.2.1'
+        required: true
+        default: 'v0.2.1'
 
 permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: v0.2.0
-  APP_VERSION: 0.2.0
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -29,6 +34,14 @@ jobs:
             pe_machine: '014c'
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $tag = $env:VERSION_TAG
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.2.1' }
+          $app = $tag.Substring(1)
+          if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
+          "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -189,23 +202,22 @@ jobs:
       - name: Create release
         shell: bash
         run: |
-          cat > release-notes.md <<'EOF'
-          ## Apocalypse v0.2.0
+          cat > release-notes.md <<EOF
+          ## Apocalypse $VERSION_TAG
 
-          - Settings menu with UI scale, reinitialize, and self-update
-          - first-run Agent / Provider / model discovery
-          - Apocalypse-owned analysis harness and cached OPS analysis
-          - real personal Plan quota adapters
-          - Claude Session maintenance: CLEAN NON-TEXT and REPAIR JSONL
-          - SPACE outer-click navigation back to all Projects
-          - x64 and native x86 Windows installers
+          Windows desktop release of Apocalypse Spatial OS.
 
-          The Windows app includes **Configure Apocalypse** and can now check GitHub Releases from Settings, download the matching installer architecture, and launch the updater.
+          - x64 and native x86 installers
+          - standalone WebView2 desktop UI
+          - Agent / Provider / model discovery and reinitialize flow
+          - Apocalypse-owned analysis harness
+          - Settings-based self-update
+          - Claude Session maintenance tools
 
           These installers are unsigned, so Windows SmartScreen may warn on first launch.
           EOF
-          if gh release view "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          if gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$VERSION_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$RELEASE_VERSION" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Apocalypse $RELEASE_VERSION" --notes-file release-notes.md --latest
+            gh release create "$VERSION_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Apocalypse $VERSION_TAG" --notes-file release-notes.md --latest
           fi
