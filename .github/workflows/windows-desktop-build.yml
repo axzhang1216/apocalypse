@@ -7,19 +7,19 @@ on:
     branches:
       - main
     paths:
-      - 'skills_apocalypse/.release-v0.3.2'
+      - 'skills_apocalypse/.release-v0.3.3'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.2'
+        description: 'Release version, e.g. v0.3.3'
         required: true
-        default: 'v0.3.2'
+        default: 'v0.3.3'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.2') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.3') }}
 
 jobs:
   build:
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.2' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.3' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -189,17 +189,13 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - background verified update downloads in Settings
-          - persistent download progress and READY · RESTART TO UPDATE state
-          - staged installer is SHA256-verified before download acceptance and again before install
-          - normal app exit applies a ready update with Inno Setup /VERYSILENT
-          - RESTART NOW closes Apocalypse, installs, and reopens the new version
-          - no installer wizard after this updater version is installed
-          - OPS dynamic typography and 10×7 Activity Field polish
-          - in-app onboarding, analysis harness, Plan quota adapters, and Claude session maintenance
+          - OPS panel headings enlarged and unified with SESSION CURRENT
+          - muted gray / cyan metadata strengthened for readability
+          - decorative LIVE / TODAY / SSE header labels removed
+          - background verified updater from v0.3.2 retained
           - x64 and native x86 installers
 
-          Note: installations under Program Files may still require a Windows UAC approval when the silent updater starts.
+          Installations under Program Files may still require a Windows UAC approval when a staged update is applied.
           EOF
           if gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$VERSION_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
