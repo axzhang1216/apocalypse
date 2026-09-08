@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 REPO = "axzhang1216/apocalypse"
 RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 DATA_DIR = Path.home() / ".claude" / "apocalypse"
@@ -112,8 +112,6 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             pass
     elif state.get("phase") == "install_on_exit":
-        # If this executable is still the old version, the previous helper did
-        # not complete (for example UAC was cancelled). Keep the staged update.
         installer_text = str(state.get("installer") or "")
         installer = Path(installer_text) if installer_text else None
         exists = bool(installer and installer.exists())
@@ -170,11 +168,6 @@ def _fetch_release_info() -> dict[str, Any]:
 
 
 def check_update() -> dict[str, Any]:
-    """Compatibility GET used by the Settings UI.
-
-    Active downloads are served from local state, so polling never hammers the
-    GitHub API. Idle checks still query Latest Release once.
-    """
     with _state_lock:
         state = _normalize_state(_read_state())
         phase = state.get("phase") or "idle"
@@ -322,7 +315,6 @@ def _download_worker() -> None:
 
 
 def start_update_download() -> dict[str, Any]:
-    """Start release check + verified installer download and return immediately."""
     global _download_thread
     if os.name != "nt" or not _is_packaged():
         raise RuntimeError("Background installer updates are available in the packaged Windows app only.")
@@ -339,10 +331,6 @@ def start_update_download() -> dict[str, Any]:
 
 
 def apply_update() -> dict[str, Any]:
-    """Compatibility POST used by the Settings UI.
-
-    First click stages the update. Once ready, the next click is RESTART NOW.
-    """
     with _state_lock:
         state = _normalize_state(_read_state())
         if state.get("phase") == "ready":
@@ -355,7 +343,6 @@ def _ps_quote(value: str | Path) -> str:
 
 
 def arm_update_on_exit(parent_pid: int, restart: bool = False, app_executable: str | None = None) -> dict[str, Any]:
-    """Launch a hidden helper that waits for this process, then silently installs."""
     if os.name != "nt" or not _is_packaged():
         return {"ok": False, "armed": False, "reason": "not packaged Windows"}
     with _state_lock:
@@ -413,14 +400,12 @@ def arm_update_on_exit(parent_pid: int, restart: bool = False, app_executable: s
 
 
 def request_restart_now() -> dict[str, Any]:
-    """Ask the desktop shell to close; its finally block arms the staged updater."""
     global _restart_requested
     with _state_lock:
         state = _normalize_state(_read_state())
         if state.get("phase") != "ready":
             raise RuntimeError("No staged update is ready to install.")
         _restart_requested = True
-    # Let the HTTP response reach the UI before the window is destroyed.
     threading.Timer(0.55, _restart_event.set).start()
     return {"ok": True, "restarting": True, "target_version": state.get("target_version"), "phase": "restarting"}
 
