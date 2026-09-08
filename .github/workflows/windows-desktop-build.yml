@@ -76,6 +76,8 @@ jobs:
             --add-data "skills_apocalypse/spatial_os.css;." `
             --add-data "skills_apocalypse/spatial_os.js;." `
             --add-data "skills_apocalypse/onboarding_ui.js;." `
+            --add-data "skills_apocalypse/ops_polish.css;." `
+            --add-data "skills_apocalypse/ops_polish.js;." `
             skills_apocalypse/desktop_app.py
       - name: Verify executable architecture
         shell: pwsh
