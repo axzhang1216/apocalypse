@@ -4,18 +4,22 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - 'skills_apocalypse/.release-v0.3.2'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.1'
+        description: 'Release version, e.g. v0.3.2'
         required: true
-        default: 'v0.3.1'
+        default: 'v0.3.2'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.2') }}
 
 jobs:
   build:
@@ -38,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.1' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.2' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -185,18 +189,17 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - OPS dynamic typography now follows UI Scale
-          - Activity Field is denser at 10×7 / 70 days
-          - Day click opens a large dedicated daily detail panel
-          - one-window Spatial OS; legacy dashboard / 3D workspace removed
-          - cinematic in-app first-run onboarding; no console setup companion
-          - local Agent / Provider / model discovery and Plan usage selection
-          - Apocalypse-owned analysis harness
-          - Settings-based reinitialize and self-update
-          - Claude Session CLEAN NON-TEXT and REPAIR JSONL maintenance
+          - background verified update downloads in Settings
+          - persistent download progress and READY · RESTART TO UPDATE state
+          - staged installer is SHA256-verified before download acceptance and again before install
+          - normal app exit applies a ready update with Inno Setup /VERYSILENT
+          - RESTART NOW closes Apocalypse, installs, and reopens the new version
+          - no installer wizard after this updater version is installed
+          - OPS dynamic typography and 10×7 Activity Field polish
+          - in-app onboarding, analysis harness, Plan quota adapters, and Claude session maintenance
           - x64 and native x86 installers
 
-          These installers are unsigned, so Windows SmartScreen may warn on first launch.
+          Note: installations under Program Files may still require a Windows UAC approval when the silent updater starts.
           EOF
           if gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$VERSION_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
