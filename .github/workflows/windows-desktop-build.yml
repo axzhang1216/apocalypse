@@ -4,10 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - main
-    paths:
-      - 'skills_apocalypse/.release-v0.3.3'
   workflow_dispatch:
     inputs:
       version:
@@ -19,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.3') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -192,7 +188,7 @@ jobs:
           - OPS panel headings enlarged and unified with SESSION CURRENT
           - muted gray / cyan metadata strengthened for readability
           - decorative LIVE / TODAY / SSE header labels removed
-          - background verified updater from v0.3.2 retained
+          - background verified updater retained
           - x64 and native x86 installers
 
           Installations under Program Files may still require a Windows UAC approval when a staged update is applied.
