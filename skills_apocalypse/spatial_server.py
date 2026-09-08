@@ -145,6 +145,12 @@ def ops():
         s=r.get('session_id') or '';m=lookup.get(s,{});sessions.append({'id':s,'provider':'claude','project':m.get('project_title') or r.get('project_name') or 'Unknown','title':m.get('user_goal') or m.get('summary') or s[:8],'goal':m.get('user_goal') or '','summary':m.get('summary') or '','time':r.get('last_ts') or '','status':{'green':'running','yellow':'waiting','grey':'idle'}.get(r.get('status'),'idle'),'agent':'CLAUDE','tool':tools.get(s) or '','resume':s,'cwd':r.get('cwd') or m.get('cwd') or '','context_pct':0})
     for r in legacy.scan_codex_transcripts(limit=12):
         s=r.get('session_id') or '';sessions.append({'id':s,'provider':'codex','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'CODEX','tool':'','resume':s,'cwd':r.get('cwd') or '','context_pct':0})
+    for r in legacy.scan_pi_transcripts(limit=8):
+        s=r.get('session_id') or '';sessions.append({'id':s,'provider':'pi','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'PI','tool':'','resume':s,'cwd':r.get('cwd') or '','context_pct':0})
+    for r in legacy.scan_openclaw_transcripts(limit=8):
+        s=r.get('session_id') or '';sessions.append({'id':s,'provider':'openclaw','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'OPENCLAW','tool':'','resume':s,'cwd':r.get('cwd') or '','context_pct':0})
+    for r in legacy.scan_hermes_transcripts(limit=8):
+        s=r.get('session_id') or '';sessions.append({'id':s,'provider':'hermes','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'HERMES','tool':'','resume':s,'cwd':'','context_pct':0})
     sessions.sort(key=lambda x:x.get('time') or '',reverse=True);return{'kpi':{'active_hours_84d':a['active_hours']},'activity':a['days'],'quotas':quotas(),'schedule':schedule(),'sessions':sessions[:20],'agents':agents(),'flow':flow()}
 def normalize(e):
     k=e.get('type') or 'event';typ,text,intensity=('tool_call',e.get('tool') or 'tool',.82) if k=='tool_start' else ('tool_result',e.get('tool') or 'tool',.58) if k=='tool_end' else ('completion',e.get('reason') or 'session stop',.66) if k=='stop' else (k,k,.5);s=e.get('session_id') or '';return{'type':typ,'source_type':k,'session_id':s,'agent':'CLAUDE-'+s[:8] if s else 'CLAUDE','project':e.get('project_name') or 'SYSTEM','text':text,'intensity':intensity,'ts':e.get('ts') or iso(datetime.now(timezone.utc))}
@@ -185,7 +191,7 @@ class Handler(legacy.Handler):
             return
         return super().do_GET()
 if __name__=='__main__':
-    legacy.DATA_DIR.mkdir(parents=True,exist_ok=True);legacy.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=legacy.DATA_DIR/'server.pid';pid.write_text(str(os.getpid()));threading.Thread(target=legacy.broadcast_thread,daemon=True).start();srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),Handler);print(f'Apocalypse Spatial OS running at http://localhost:{PORT}',flush=True)
+    legacy.DATA_DIR.mkdir(parents=True,exist_ok=True);legacy.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=legacy.DATA_DIR/'server.pid';pid.write_text(str(os.getpid()));threading.Thread(target=legacy.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),Handler);print(f'Apocalypse Spatial OS running at http://localhost:{PORT}',flush=True)
     try:srv.serve_forever()
     finally:
         try:pid.unlink()

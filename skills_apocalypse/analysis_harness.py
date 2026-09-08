@@ -58,6 +58,10 @@ def _post(url,payload,headers,timeout):
  try:return json.loads(raw.decode("utf-8",errors="replace"))
  except Exception as e:raise HarnessError("Provider returned non-JSON output") from e
 
+def _strip_think(t):
+ s=re.sub(r"<think>.*?</think>","",str(t or ""),flags=re.S).strip()
+ return s or str(t or "").strip()
+
 def _anthropic(c,prompt,max_tokens,system,timeout):
  payload={"model":c["model"],"max_tokens":max_tokens,"messages":[{"role":"user","content":prompt}]}
  if system:payload["system"]=system
@@ -87,7 +91,7 @@ def _chat(c,prompt,max_tokens,system,timeout):
  ms.append({"role":"user","content":prompt});d=_post(_url(c.get("base_url") or "https://api.openai.com","/v1/chat/completions"),{"model":c["model"],"messages":ms,"max_tokens":max_tokens},_headers(c),timeout)
  try:
   v=d["choices"][0]["message"]["content"]
-  if isinstance(v,str) and v.strip():return v.strip()
+  if isinstance(v,str) and v.strip():return _strip_think(v)
  except Exception:pass
  raise HarnessError("Chat-compatible response did not contain assistant text")
 

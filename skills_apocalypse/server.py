@@ -517,13 +517,18 @@ def _export_to_cwd(session_id, text, kind):
         if not meta:
             return None, "could not analyze transcript"
         cwd = meta.get("cwd") or ""
-    else:  # codex
-        tpath = _find_codex_transcript(session_id)
+    else:  # codex / pi / openclaw
+        if kind == "codex":
+            tpath = _find_codex_transcript(session_id)
+        elif kind == "pi":
+            tpath = _find_pi_style_transcript(PI_SESSIONS_DIR, session_id)
+        else:
+            tpath = _find_pi_style_transcript(OPENCLAW_AGENTS_DIR, session_id)
         if not tpath:
             return None, "transcript not found"
-        meta = _read_codex_session_meta(tpath)
+        meta = _read_codex_session_meta(tpath) if kind == "codex" else _read_pi_style_header(tpath)
         if not meta:
-            return None, "could not read session_meta"
+            return None, "could not read session metadata"
         cwd = meta.get("cwd") or ""
     if not cwd:
         return None, "no working directory recorded for this session"
@@ -638,6 +643,211 @@ def parse_codex_conversation(path):
                         "is_error": False,
                     })
 
+    return msgs
+
+
+# ─────────────────────── pi / openclaw / hermes transcript sources ───────────────────────
+# pi and openclaw share one session-jsonl format ("pi-style"):
+# first record {type:'session', id, timestamp, cwd}; then type='message'
+# records with message.role user/assistant/toolResult and content blocks
+# text/thinking/toolCall/image. Hermes stores sessions in a SQLite db.
+
+PI_SESSIONS_DIR = Path.home() / ".pi" / "agent" / "sessions"
+OPENCLAW_AGENTS_DIR = Path.home() / ".openclaw" / "agents"
+HERMES_DB = Path.home() / ".hermes" / "state.db"
+OTHER_TRANSCRIPT_LIMIT = 200
+
+
+def _iter_pi_style_files(root):
+    if not root.exists():
+        return
+    for jsonl in root.rglob("*.jsonl"):
+        if jsonl.is_file() and ".trajectory." not in jsonl.name:
+            yield jsonl
+
+
+def _read_pi_style_header(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            d = json.loads(f.readline())
+        if d.get("type") == "session":
+            return d
+    except Exception:
+        pass
+    return None
+
+
+def _pi_style_title(path):
+    """First user text, truncated — used as a display title."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if r.get("type") != "message":
+                    continue
+                m = r.get("message") or {}
+                if m.get("role") != "user":
+                    continue
+                for c in (m.get("content") if isinstance(m.get("content"), list) else []):
+                    if c.get("type") == "text" and str(c.get("text") or "").strip():
+                        return str(c["text"]).strip()[:80]
+    except Exception:
+        pass
+    return None
+
+
+def scan_pi_style_transcripts(root, limit=OTHER_TRANSCRIPT_LIMIT):
+    results = []
+    for jsonl in _iter_pi_style_files(root) or []:
+        meta = _read_pi_style_header(jsonl)
+        if not meta:
+            continue
+        sid = meta.get("id") or jsonl.stem
+        cwd = meta.get("cwd") or ""
+        results.append({
+            "session_id": sid,
+            "cwd": cwd,
+            "project_name": _project_name(cwd),
+            "last_ts": meta.get("timestamp") or "",
+            "thread_name": _pi_style_title(jsonl),
+        })
+    results.sort(key=lambda r: r.get("last_ts") or "", reverse=True)
+    return results[:limit]
+
+
+def scan_pi_transcripts(limit=OTHER_TRANSCRIPT_LIMIT):
+    return scan_pi_style_transcripts(PI_SESSIONS_DIR, limit)
+
+
+def scan_openclaw_transcripts(limit=OTHER_TRANSCRIPT_LIMIT):
+    return scan_pi_style_transcripts(OPENCLAW_AGENTS_DIR, limit)
+
+
+def _find_pi_style_transcript(root, session_id):
+    if "/" in session_id or "\\" in session_id or not session_id or session_id.startswith("."):
+        return None
+    for jsonl in _iter_pi_style_files(root) or []:
+        if session_id in jsonl.stem:
+            return jsonl
+    return None
+
+
+def parse_pi_style_conversation(path):
+    """pi/openclaw session jsonl -> parse_conversation() schema.
+    thinking/image blocks are skipped; toolCall records pair with the
+    following toolResult via toolCallId."""
+    msgs = []
+    pending_tools = {}
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    with f:
+        for line in f:
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("type") != "message":
+                continue
+            m = r.get("message") or {}
+            role = m.get("role")
+            ts = r.get("timestamp") or ""
+            if role == "toolResult":
+                text = " ".join(str(c.get("text") or "") for c in (m.get("content") or []) if isinstance(c, dict) and c.get("type") == "text")
+                idx = pending_tools.get(m.get("toolCallId"))
+                if idx is not None:
+                    msgs[idx]["output"] = text
+                    msgs[idx]["is_error"] = bool(m.get("isError"))
+                else:
+                    msgs.append({"role": "tool", "ts": ts, "tool_use_id": m.get("toolCallId") or "", "tool": m.get("toolName") or "", "input": "", "output": text, "is_error": bool(m.get("isError"))})
+                continue
+            if role not in ("user", "assistant"):
+                continue
+            texts = []
+            for c in (m.get("content") if isinstance(m.get("content"), list) else []):
+                if not isinstance(c, dict):
+                    continue
+                ct = c.get("type")
+                if ct == "text" and str(c.get("text") or "").strip():
+                    texts.append(str(c["text"]))
+                elif ct == "toolCall":
+                    msgs.append({"role": "tool", "ts": ts, "tool_use_id": c.get("id") or "", "tool": c.get("name") or "", "input": json.dumps(c.get("arguments") or {}, ensure_ascii=False), "output": None, "is_error": False})
+                    pending_tools[c.get("id")] = len(msgs) - 1
+            if texts:
+                msgs.append({"role": role, "ts": ts, "text": "\n".join(texts)})
+    return msgs
+
+
+def _hermes_connect():
+    if not HERMES_DB.exists():
+        return None
+    import sqlite3
+    try:
+        return sqlite3.connect("file:%s?mode=ro" % HERMES_DB, uri=True)
+    except Exception:
+        return None
+
+
+def scan_hermes_transcripts(limit=OTHER_TRANSCRIPT_LIMIT):
+    db = _hermes_connect()
+    if not db:
+        return []
+    try:
+        rows = db.execute(
+            "SELECT s.id, s.source, s.display_name, MAX(m.timestamp) "
+            "FROM sessions s LEFT JOIN messages m ON m.session_id = s.id "
+            "GROUP BY s.id ORDER BY MAX(m.timestamp) DESC LIMIT ?",
+            (limit if limit else 10 ** 9,)).fetchall()
+        out = []
+        for sid, source, display, last in rows:
+            first = db.execute(
+                "SELECT content FROM messages WHERE session_id=? AND role='user' "
+                "AND content NOT LIKE '[System:%' ORDER BY timestamp LIMIT 1", (sid,)).fetchone()
+            title = first[0].strip()[:80] if first and first[0] else None
+            ts = ""
+            if last:
+                ts = datetime.fromtimestamp(last, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            out.append({
+                "session_id": sid,
+                "cwd": "",
+                "project_name": "hermes-" + (source or "unknown"),
+                "last_ts": ts,
+                "thread_name": title or display or sid,
+            })
+        return out
+    except Exception:
+        return []
+    finally:
+        db.close()
+
+
+def parse_hermes_conversation(session_id):
+    db = _hermes_connect()
+    if not db:
+        return []
+    try:
+        rows = db.execute(
+            "SELECT role, content, tool_name, tool_calls, timestamp FROM messages "
+            "WHERE session_id=? ORDER BY timestamp", (session_id,)).fetchall()
+    except Exception:
+        db.close()
+        return []
+    db.close()
+    msgs = []
+    for role, content, tool_name, tool_calls, ts in rows:
+        iso = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z") if ts else ""
+        text = str(content or "")
+        if role == "user" and text.startswith("[System:"):
+            continue
+        if tool_name:
+            msgs.append({"role": "tool", "ts": iso, "tool_use_id": "", "tool": tool_name,
+                         "input": str(tool_calls or ""), "output": text or None, "is_error": False})
+        elif role in ("user", "assistant") and text.strip():
+            msgs.append({"role": role, "ts": iso, "text": text})
     return msgs
 
 
@@ -965,6 +1175,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.send_json(parse_codex_conversation(tpath))
 
+        elif path == "/api/pi/sessions":
+            self.send_json(scan_pi_transcripts())
+
+        elif path == "/api/openclaw/sessions":
+            self.send_json(scan_openclaw_transcripts())
+
+        elif path == "/api/hermes/sessions":
+            self.send_json(scan_hermes_transcripts())
+
+        elif path.startswith("/api/pi/sessions/") or path.startswith("/api/openclaw/sessions/"):
+            provider = "pi" if path.startswith("/api/pi/") else "openclaw"
+            session_id = path[len("/api/" + provider + "/sessions/"):]
+            if "/" in session_id or "\\" in session_id or not session_id or session_id.startswith("."):
+                self.send_json({"error": "bad id"}, 400)
+                return
+            root = PI_SESSIONS_DIR if provider == "pi" else OPENCLAW_AGENTS_DIR
+            tpath = _find_pi_style_transcript(root, session_id)
+            if not tpath:
+                self.send_json({"error": "not found"}, 404)
+                return
+            self.send_json(parse_pi_style_conversation(tpath))
+
+        elif path.startswith("/api/hermes/sessions/"):
+            session_id = path[len("/api/hermes/sessions/"):]
+            if "/" in session_id or "\\" in session_id or not session_id or session_id.startswith("."):
+                self.send_json({"error": "bad id"}, 400)
+                return
+            self.send_json(parse_hermes_conversation(session_id))
+
         elif path.startswith("/api/sessions2/search"):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
@@ -1271,6 +1510,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path.startswith("/api/codex/sessions/") and path.endswith("/export"):
             self._handle_export_post(path, "/api/codex/sessions/", "/export", "codex")
 
+        elif path.startswith("/api/pi/sessions/") and path.endswith("/export"):
+            self._handle_export_post(path, "/api/pi/sessions/", "/export", "pi")
+
+        elif path.startswith("/api/openclaw/sessions/") and path.endswith("/export"):
+            self._handle_export_post(path, "/api/openclaw/sessions/", "/export", "openclaw")
+
         else:
             self.send_json({"error": "not found"}, 404)
 
@@ -1316,6 +1561,7 @@ if __name__ == "__main__":
     t = threading.Thread(target=broadcast_thread, daemon=True)
     t.start()
 
+    http.server.ThreadingHTTPServer.allow_reuse_address=False
     server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Apocalypse running at http://localhost:{PORT}", flush=True)
     try:

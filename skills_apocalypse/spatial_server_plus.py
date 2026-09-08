@@ -218,7 +218,7 @@ class Handler(spatial.Handler):
 
 
 if __name__=="__main__":
- core.DATA_DIR.mkdir(parents=True,exist_ok=True);core.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=core.DATA_DIR/"server.pid";pid.write_text(str(os.getpid()),encoding="utf-8");threading.Thread(target=core.broadcast_thread,daemon=True).start();srv=http.server.ThreadingHTTPServer(("127.0.0.1",PORT),Handler);print(f"Apocalypse Spatial OS running at http://localhost:{PORT}",flush=True)
+ core.DATA_DIR.mkdir(parents=True,exist_ok=True);core.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=core.DATA_DIR/"server.pid";pid.write_text(str(os.getpid()),encoding="utf-8");threading.Thread(target=core.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(("127.0.0.1",PORT),Handler);print(f"Apocalypse Spatial OS running at http://localhost:{PORT}",flush=True)
  try:srv.serve_forever()
  finally:
   try:pid.unlink()

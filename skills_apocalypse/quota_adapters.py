@@ -294,16 +294,41 @@ def _merge_manual(rows):
     return rows
 
 
+_ERROR_STATUSES = ("GPROXY OFFLINE", "NO DATA", "NO PROVIDER ID")
+_last_good: dict[str, dict[str, Any]] = {}
+
+
+def _merge_last_good(rows):
+    out = []
+    for row in rows:
+        name = str(row.get("provider") or "")
+        has_data = any(row.get(k, {}).get("available") for k in ("five_hour", "weekly"))
+        if not has_data and str(row.get("status") or "") in _ERROR_STATUSES and name in _last_good:
+            stale = json.loads(json.dumps(_last_good[name]))
+            stale["stale"] = True
+            out.append(stale)
+            continue
+        if has_data:
+            _last_good[name] = json.loads(json.dumps(row))
+        out.append(row)
+    return out
+
+
 def _fetch_uncached():
     cfg = _config()
     enabled = _enabled(cfg)
     if not enabled:
         return []
-    try:
-        rows = _from_gproxy(cfg)
-    except Exception:
-        rows = [_empty_provider(name, "GPROXY OFFLINE") for name, _ in TARGETS if name in enabled]
-    return _merge_manual(rows)
+    for attempt in range(3):
+        try:
+            rows = _from_gproxy(cfg)
+            break
+        except Exception:
+            if attempt == 2:
+                rows = [_empty_provider(name, "GPROXY OFFLINE") for name, _ in TARGETS if name in enabled]
+            else:
+                time.sleep(0.6 * (attempt + 1))
+    return _merge_manual(_merge_last_good(rows))
 
 
 def get_quotas(force: bool = False):

@@ -110,6 +110,7 @@ def _codex(a):
  if isinstance(ps,dict):
   for name,p in ps.items():
    if not isinstance(p,dict):continue
+   if "cc-switch" in str(name).lower():continue  # local CC Switch proxy, not a provider
    base=p.get("base_url") or p.get("baseUrl") or "";ek=p.get("env_key") or p.get("envKey");auth={"kind":"env","name":str(ek)} if ek else None;plan=infer_plan(name,model,base)
    out.append(_candidate("codex",str(name),plan,_transport(p.get("wire_api") or p.get("api"),plan),[model] if model else [],base,auth,configured=not ek or bool(os.environ.get(str(ek))),detail="from ~/.codex/config.toml"))
  return out
