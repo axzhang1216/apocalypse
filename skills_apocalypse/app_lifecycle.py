@@ -6,7 +6,7 @@ import json,os,re,subprocess,sys,tempfile,urllib.error,urllib.request
 from pathlib import Path
 from typing import Any
 
-APP_VERSION="0.3.0";REPO="axzhang1216/apocalypse";RELEASE_API=f"https://api.github.com/repos/{REPO}/releases/latest"
+APP_VERSION="0.3.1";REPO="axzhang1216/apocalypse";RELEASE_API=f"https://api.github.com/repos/{REPO}/releases/latest"
 
 def _version_tuple(v):return tuple(int(x) for x in re.findall(r"\d+",str(v).split("-",1)[0])[:4]) or (0,)
 def _arch():return "x64" if sys.maxsize>2**32 else "x86"
