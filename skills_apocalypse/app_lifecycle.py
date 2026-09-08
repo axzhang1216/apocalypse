@@ -92,7 +92,7 @@ def _public_state(state: dict[str, Any]) -> dict[str, Any]:
         for k in (
             "phase", "current_version", "target_version", "progress", "downloaded",
             "total", "asset_name", "error", "restart_available", "latest_version",
-            "available", "arch", "published_at",
+            "available", "arch", "published_at", "can_install",
         )
     }
 
@@ -100,10 +100,10 @@ def _public_state(state: dict[str, Any]) -> dict[str, Any]:
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     target = str(state.get("target_version") or "")
     if target and _version_tuple(target) <= _version_tuple(APP_VERSION):
-        installer = Path(str(state.get("installer") or ""))
-        if installer:
+        installer_text = str(state.get("installer") or "")
+        if installer_text:
             try:
-                installer.unlink(missing_ok=True)
+                Path(installer_text).unlink(missing_ok=True)
             except Exception:
                 pass
         state = _base_state()
@@ -112,12 +112,14 @@ def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             pass
     elif state.get("phase") == "install_on_exit":
-        # We are running again but still on the old version, so a previous
-        # install was cancelled or failed. Make the staged update actionable.
-        installer = Path(str(state.get("installer") or ""))
-        state["phase"] = "ready" if installer.exists() else "error"
-        state["restart_available"] = installer.exists()
-        if not installer.exists():
+        # If this executable is still the old version, the previous helper did
+        # not complete (for example UAC was cancelled). Keep the staged update.
+        installer_text = str(state.get("installer") or "")
+        installer = Path(installer_text) if installer_text else None
+        exists = bool(installer and installer.exists())
+        state["phase"] = "ready" if exists else "error"
+        state["restart_available"] = exists
+        if not exists:
             state["error"] = "The staged installer is no longer available. Download the update again."
     state["current_version"] = APP_VERSION
     return state
@@ -134,7 +136,7 @@ def app_status() -> dict[str, Any]:
     }
 
 
-def check_update() -> dict[str, Any]:
+def _fetch_release_info() -> dict[str, Any]:
     try:
         release = _github_json(RELEASE_API)
     except urllib.error.HTTPError as exc:
@@ -167,19 +169,37 @@ def check_update() -> dict[str, Any]:
     }
 
 
+def check_update() -> dict[str, Any]:
+    """Compatibility GET used by the Settings UI.
+
+    Active downloads are served from local state, so polling never hammers the
+    GitHub API. Idle checks still query Latest Release once.
+    """
+    with _state_lock:
+        state = _normalize_state(_read_state())
+        phase = state.get("phase") or "idle"
+        if phase in ("checking", "downloading", "ready", "install_on_exit", "error"):
+            return _public_state(state)
+    info = _fetch_release_info()
+    return {**info, "phase": "available" if info.get("available") else "up_to_date", "progress": 0.0,
+            "target_version": info.get("latest_version") if info.get("available") else None,
+            "restart_available": False, "error": None}
+
+
 def update_status(refresh_release: bool = False) -> dict[str, Any]:
     with _state_lock:
         state = _normalize_state(_read_state())
         phase = state.get("phase") or "idle"
     if refresh_release and phase not in ("checking", "downloading", "ready", "install_on_exit"):
         try:
-            info = check_update()
+            info = _fetch_release_info()
             with _state_lock:
                 state.update({
                     "latest_version": info.get("latest_version"),
                     "available": info.get("available"),
                     "arch": info.get("arch"),
                     "published_at": info.get("published_at"),
+                    "can_install": info.get("can_install"),
                 })
                 if not info.get("available") and phase == "idle":
                     state["phase"] = "up_to_date"
@@ -199,7 +219,7 @@ def _sha256_file(path: Path) -> str:
 def _download_worker() -> None:
     global _download_thread
     try:
-        info = check_update()
+        info = _fetch_release_info()
         if not info.get("available"):
             with _state_lock:
                 _write_state({
@@ -207,6 +227,7 @@ def _download_worker() -> None:
                     "latest_version": info.get("latest_version"),
                     "available": False,
                     "arch": info.get("arch"),
+                    "can_install": info.get("can_install"),
                 })
             return
         if not info.get("can_install"):
@@ -238,6 +259,7 @@ def _download_worker() -> None:
             "total": total,
             "expected_sha256": expected_sha,
             "published_at": info.get("published_at"),
+            "can_install": True,
         }
         with _state_lock:
             _write_state(state)
@@ -249,29 +271,26 @@ def _download_worker() -> None:
         downloaded = 0
         hasher = hashlib.sha256()
         last_state_write = 0.0
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response, open(temp, "wb") as handle:
-                header_total = int(response.headers.get("Content-Length") or 0)
-                if header_total > 0:
-                    total = header_total
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    handle.write(chunk)
-                    hasher.update(chunk)
-                    downloaded += len(chunk)
-                    now = time.monotonic()
-                    if now - last_state_write >= 0.18:
-                        progress = min(1.0, downloaded / total) if total else 0.0
-                        with _state_lock:
-                            state.update({"downloaded": downloaded, "total": total, "progress": progress})
-                            _write_state(state)
-                        last_state_write = now
-                handle.flush()
-                os.fsync(handle.fileno())
-        finally:
-            pass
+        with urllib.request.urlopen(req, timeout=30) as response, open(temp, "wb") as handle:
+            header_total = int(response.headers.get("Content-Length") or 0)
+            if header_total > 0:
+                total = header_total
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                hasher.update(chunk)
+                downloaded += len(chunk)
+                now = time.monotonic()
+                if now - last_state_write >= 0.18:
+                    progress = min(1.0, downloaded / total) if total else 0.0
+                    with _state_lock:
+                        state.update({"downloaded": downloaded, "total": total, "progress": progress})
+                        _write_state(state)
+                    last_state_write = now
+            handle.flush()
+            os.fsync(handle.fileno())
 
         actual_sha = hasher.hexdigest().lower()
         if actual_sha != expected_sha:
@@ -303,7 +322,7 @@ def _download_worker() -> None:
 
 
 def start_update_download() -> dict[str, Any]:
-    """Start a release check + verified installer download and return immediately."""
+    """Start release check + verified installer download and return immediately."""
     global _download_thread
     if os.name != "nt" or not _is_packaged():
         raise RuntimeError("Background installer updates are available in the packaged Windows app only.")
@@ -319,6 +338,18 @@ def start_update_download() -> dict[str, Any]:
         return _public_state(state)
 
 
+def apply_update() -> dict[str, Any]:
+    """Compatibility POST used by the Settings UI.
+
+    First click stages the update. Once ready, the next click is RESTART NOW.
+    """
+    with _state_lock:
+        state = _normalize_state(_read_state())
+        if state.get("phase") == "ready":
+            return request_restart_now()
+    return start_update_download()
+
+
 def _ps_quote(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -331,8 +362,9 @@ def arm_update_on_exit(parent_pid: int, restart: bool = False, app_executable: s
         state = _normalize_state(_read_state())
         if state.get("phase") != "ready":
             return {"ok": False, "armed": False, "reason": "no staged update"}
-        installer = Path(str(state.get("installer") or ""))
-        if not installer.exists():
+        installer_text = str(state.get("installer") or "")
+        installer = Path(installer_text) if installer_text else None
+        if not installer or not installer.exists():
             state.update({"phase": "error", "error": "Staged installer is missing.", "restart_available": False})
             _write_state(state)
             return {"ok": False, "armed": False, "reason": "installer missing"}
@@ -390,7 +422,7 @@ def request_restart_now() -> dict[str, Any]:
         _restart_requested = True
     # Let the HTTP response reach the UI before the window is destroyed.
     threading.Timer(0.55, _restart_event.set).start()
-    return {"ok": True, "restarting": True, "target_version": state.get("target_version")}
+    return {"ok": True, "restarting": True, "target_version": state.get("target_version"), "phase": "restarting"}
 
 
 def wait_for_restart_request() -> None:
