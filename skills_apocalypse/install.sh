@@ -15,6 +15,7 @@ mkdir -p "$DEST/hooks" "$HOME/bin"
 FILES=(
   server.py spatial_server.py spatial_server_plus.py
   spatial_os.html spatial_os.css spatial_os.js onboarding_ui.js
+  ops_polish.css ops_polish.js
   apocalypse_ui.py apocalypse-ui apocalypse-ui.cmd
   workspace_init.py platform_utils.py
   agent_discovery.py onboarding.py analysis_harness.py anthropic.py
