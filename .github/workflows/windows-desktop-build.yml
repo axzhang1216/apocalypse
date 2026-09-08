@@ -4,18 +4,22 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - 'skills_apocalypse/.release-v0.3.1'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.0'
+        description: 'Release version, e.g. v0.3.1'
         required: true
-        default: 'v0.3.0'
+        default: 'v0.3.1'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.1') }}
 
 jobs:
   build:
@@ -38,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.0' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.1' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -185,6 +189,9 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
+          - OPS dynamic typography now follows UI Scale
+          - Activity Field is denser at 10×7 / 70 days
+          - Day click opens a large dedicated daily detail panel
           - one-window Spatial OS; legacy dashboard / 3D workspace removed
           - cinematic in-app first-run onboarding; no console setup companion
           - local Agent / Provider / model discovery and Plan usage selection
