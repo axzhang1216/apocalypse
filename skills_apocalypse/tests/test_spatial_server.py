@@ -94,13 +94,20 @@ class SpatialWorldTests(unittest.TestCase):
         self.assertEqual(result["text"], "Edit")
         self.assertTrue(result["agent"].startswith("CLAUDE-"))
 
-    def test_ops_keeps_claude_and_codex_in_one_session_surface(self):
+    def test_ops_keeps_all_agents_in_one_session_surface(self):
         codex = [{
             "session_id": "codex-a",
             "cwd": "/tmp/codex-proj",
             "project_name": "codex-proj",
             "last_ts": "2026-09-04T08:00:00Z",
             "thread_name": "Review integration",
+        }]
+        others = [{
+            "session_id": "agent-a",
+            "cwd": "/tmp/agent-proj",
+            "project_name": "agent-proj",
+            "last_ts": "2026-09-04T07:00:00Z",
+            "thread_name": "Pi/openclaw/hermes row",
         }]
         empty_activity = {"window_days": 84, "active_hours": 0, "days": []}
         with mock.patch.object(spatial_server, "activity", return_value=empty_activity), \
@@ -111,11 +118,14 @@ class SpatialWorldTests(unittest.TestCase):
              mock.patch.object(spatial_server, "schedule", return_value={"events": [], "tasks": [], "suggested": []}), \
              mock.patch.object(spatial_server.legacy, "read_events", return_value=[]), \
              mock.patch.object(spatial_server.legacy, "scan_transcripts", return_value=LIVE), \
-             mock.patch.object(spatial_server.legacy, "scan_codex_transcripts", return_value=codex):
+             mock.patch.object(spatial_server.legacy, "scan_codex_transcripts", return_value=codex), \
+             mock.patch.object(spatial_server.legacy, "scan_pi_transcripts", return_value=others), \
+             mock.patch.object(spatial_server.legacy, "scan_openclaw_transcripts", return_value=others), \
+             mock.patch.object(spatial_server.legacy, "scan_hermes_transcripts", return_value=others):
             payload = spatial_server.ops()
 
         providers = {row["provider"] for row in payload["sessions"]}
-        self.assertEqual(providers, {"claude", "codex"})
+        self.assertEqual(providers, {"claude", "codex", "pi", "openclaw", "hermes"})
 
 
 if __name__ == "__main__":
