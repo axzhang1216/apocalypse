@@ -18,6 +18,8 @@ import workspace_init
 PORT=spatial.PORT;http=spatial.http;core=spatial.legacy
 ANALYSIS_FILE=core.DATA_DIR/"ops_analysis.json"
 ONBOARDING_JS=Path(__file__).resolve().parent/"onboarding_ui.js"
+OPS_POLISH_CSS=Path(__file__).resolve().parent/"ops_polish.css"
+OPS_POLISH_JS=Path(__file__).resolve().parent/"ops_polish.js"
 spatial.quotas=quota_adapters.get_quotas
 
 
@@ -178,10 +180,16 @@ class Handler(spatial.Handler):
   path=urlparse(self.path).path
   if path=="/":
    try:
-    html=spatial.SPATIAL_HTML.read_text(encoding="utf-8");html=html.replace("</body>",'<script src="/onboarding_ui.js"></script></body>');body=html.encode("utf-8")
+    html=spatial.SPATIAL_HTML.read_text(encoding="utf-8")
+    html=html.replace("</head>",'<link rel="stylesheet" href="/ops_polish.css"></head>')
+    html=html.replace("</body>",'<script src="/ops_polish.js"></script><script src="/onboarding_ui.js"></script></body>')
+    body=html.encode("utf-8")
     self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8");self.send_header("Cache-Control","no-cache");self.send_header("Content-Length",str(len(body)));self.end_headers();self.wfile.write(body);return
    except Exception as e:return self.send_json({"error":str(e)},500)
   if path=="/onboarding_ui.js":return self.static(ONBOARDING_JS,"application/javascript; charset=utf-8")
+  if path=="/ops_polish.css":return self.static(OPS_POLISH_CSS,"text/css; charset=utf-8")
+  if path=="/ops_polish.js":return self.static(OPS_POLISH_JS,"application/javascript; charset=utf-8")
+  if path in ("/legacy/dashboard","/dashboard.html","/workspace.html"):return self.send_json({"error":"not found"},404)
   if path=="/api/onboarding/status":return self.send_json(onboarding.status())
   if path=="/api/onboarding/discover":
    try:return self.send_json(onboarding.discover())
