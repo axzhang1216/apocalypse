@@ -8,6 +8,7 @@ created when a source is unavailable.
 """
 from __future__ import annotations
 
+import base64
 import http.cookiejar
 import json
 import os
@@ -16,6 +17,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -237,6 +239,152 @@ def _window(c):
             "window_key": c.get("window_key") or "", "used_percent": c.get("used_percent"), "period_end": end}
 
 
+# ─────────────────────── official provider quota APIs ───────────────────────
+# Direct reads from the providers' own usage endpoints (no gproxy relay).
+# OpenAI: chatgpt.com backend wham/usage, auth from ~/.codex/auth.json.
+# Grok:   cli-chat-proxy.grok.com billing, auth from ~/.grok/auth.json.
+# Each returns a full provider row, or {"auth": "missing"|"expired"} so the
+# UI can offer a login button.
+
+CODEX_AUTH_FILE = Path.home() / ".codex" / "auth.json"
+CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+GROK_AUTH_FILE = Path.home() / ".grok" / "auth.json"
+GROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+
+
+def _jwt_exp(token: str):
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload.encode())).get("exp")
+    except Exception:
+        return None
+
+
+def _read_codex_auth() -> dict[str, Any]:
+    data = _load_json(CODEX_AUTH_FILE)
+    tokens = (data or {}).get("tokens") or {}
+    token = tokens.get("access_token")
+    if not token:
+        return {"status": "missing"}
+    exp = _jwt_exp(str(token))
+    if exp and float(exp) < time.time():
+        return {"status": "expired"}
+    return {"status": "ok", "token": str(token), "account_id": tokens.get("account_id")}
+
+
+def _official_window(win: Any) -> dict[str, Any]:
+    if not isinstance(win, dict):
+        return _empty_window()
+    used = win.get("used_percent")
+    if used is None:
+        return _empty_window()
+    try:
+        used_f = float(used)
+    except (TypeError, ValueError):
+        return _empty_window()
+    reset_s = win.get("reset_after_seconds") or 0
+    return {"remaining": max(0.0, 1.0 - used_f / 100.0),
+            "reset_in_min": int(float(reset_s) / 60),
+            "available": True, "used_percent": str(int(used_f))}
+
+
+def _codex_official() -> dict[str, Any]:
+    auth = _read_codex_auth()
+    if auth["status"] != "ok":
+        return {"auth": auth["status"]}
+    headers = {
+        "authorization": "Bearer " + auth["token"],
+        "user-agent": "codex-cli",
+        "openai-beta": "codex-1",
+        "originator": "Codex Desktop",
+        "accept": "application/json",
+    }
+    if auth.get("account_id"):
+        headers["chatgpt-account-id"] = str(auth["account_id"])
+    req = urllib.request.Request(CODEX_USAGE_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return {"auth": "expired"}
+        raise
+    rl = data.get("rate_limit") or {}
+    return {"provider": "OpenAI", "status": "OFFICIAL", "auth": "ok",
+            "five_hour": _official_window(rl.get("primary_window")),
+            "weekly": _official_window(rl.get("secondary_window")),
+            "source": "official"}
+
+
+def _read_grok_auth() -> dict[str, Any]:
+    data = _load_json(GROK_AUTH_FILE)
+    if not isinstance(data, dict) or not data:
+        return {"status": "missing"}
+    entry = next((v for v in data.values() if isinstance(v, dict) and v.get("key")), None)
+    if not entry:
+        return {"status": "missing"}
+    exp_raw = entry.get("expires_at")
+    if exp_raw:
+        try:
+            exp = datetime.fromisoformat(str(exp_raw).replace("Z", "+00:00")).timestamp()
+            if exp < time.time():
+                return {"status": "expired"}
+        except Exception:
+            pass
+    return {"status": "ok", "token": str(entry["key"]), "user_id": entry.get("user_id")}
+
+
+def _grok_official() -> dict[str, Any]:
+    auth = _read_grok_auth()
+    if auth["status"] != "ok":
+        return {"auth": auth["status"]}
+    headers = {
+        "authorization": "Bearer " + auth["token"],
+        "x-xai-token-auth": "xai-grok-cli",
+        "accept": "application/json",
+        "user-agent": "Apocalypse-Quota/1",
+    }
+    if auth.get("user_id"):
+        headers["x-userid"] = str(auth["user_id"])
+    req = urllib.request.Request(GROK_BILLING_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return {"auth": "expired"}
+        raise
+    cfg = data.get("config") if isinstance(data.get("config"), dict) else data
+    pct = cfg.get("creditUsagePercent")
+    reset_min = 0
+    period = cfg.get("currentPeriod") or {}
+    end = period.get("end") or cfg.get("billingPeriodEnd")
+    if end:
+        try:
+            reset_min = max(0, int((datetime.fromisoformat(str(end).replace("Z", "+00:00")).timestamp() - time.time()) / 60))
+        except Exception:
+            reset_min = 0
+    if pct is None:
+        # unified-billing fallback: derive from monthlyLimit/used money values
+        try:
+            limit = float((cfg.get("monthlyLimit") or {}).get("val") or 0)
+            used = float((cfg.get("used") or {}).get("val") or 0)
+            pct = (used / limit * 100.0) if limit > 0 else None
+        except (TypeError, ValueError):
+            pct = None
+    weekly = _empty_window()
+    if pct is not None:
+        weekly = {"remaining": max(0.0, 1.0 - float(pct) / 100.0),
+                  "reset_in_min": reset_min, "available": True,
+                  "used_percent": str(int(float(pct)))}
+    return {"provider": "Grok", "status": "OFFICIAL", "auth": "ok",
+            "five_hour": _empty_window(), "weekly": weekly,
+            "source": "official"}
+
+
+_OFFICIAL_FETCHERS = {"OpenAI": _codex_official, "Grok": _grok_official}
+
 def _from_gproxy(cfg):
     enabled = set(_enabled(cfg))
     if not enabled:
@@ -328,7 +476,28 @@ def _fetch_uncached():
                 rows = [_empty_provider(name, "GPROXY OFFLINE") for name, _ in TARGETS if name in enabled]
             else:
                 time.sleep(0.6 * (attempt + 1))
-    return _merge_manual(_merge_last_good(rows))
+    by_name = {str(r.get("provider")): r for r in rows}
+    merged = []
+    for name, _ in TARGETS:
+        if name not in enabled:
+            continue
+        base = by_name.get(name) or _empty_provider(name, "NO PROVIDER")
+        fetcher = _OFFICIAL_FETCHERS.get(name)
+        if fetcher:
+            try:
+                official = fetcher()
+            except Exception:
+                official = None
+            if official and official.get("auth") == "ok":
+                merged.append(official)
+                continue
+            if official and official.get("auth") in ("missing", "expired"):
+                base["auth"] = official["auth"]
+                has_data = any(base.get(k, {}).get("available") for k in ("five_hour", "weekly"))
+                if not has_data:
+                    base["status"] = "LOGIN REQUIRED" if official["auth"] == "missing" else "TOKEN EXPIRED"
+        merged.append(base)
+    return _merge_manual(_merge_last_good(merged))
 
 
 def get_quotas(force: bool = False):

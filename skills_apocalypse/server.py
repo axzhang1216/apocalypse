@@ -1463,6 +1463,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 500)
 
+        elif path.startswith("/api/auth/login/"):
+            provider = path[len("/api/auth/login/"):]
+            if provider not in ("codex", "grok"):
+                self.send_json({"ok": False, "error": "unknown provider"}, 400)
+                return
+            import shutil
+            if provider == "codex":
+                exe = shutil.which("codex")
+                if not exe:
+                    self.send_json({"ok": False, "error": "codex CLI not found on PATH"}, 500)
+                    return
+                cmd = f'"{exe}" login'
+            else:  # grok — binary at ~/.grok/bin/grok or PATH
+                exe = shutil.which("grok") or str(Path.home() / ".grok" / "bin" / "grok.exe")
+                if not Path(exe).exists():
+                    self.send_json({"ok": False, "error": "grok CLI not found"}, 500)
+                    return
+                cmd = f'"{exe}" login'
+            try:
+                _launch_in_terminal(cmd)
+                self.send_json({"ok": True, "provider": provider, "cmd": cmd})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 500)
+
         elif path.endswith("/repair") and path.startswith("/api/sessions2/"):
             session_id = path[len("/api/sessions2/"):-len("/repair")]
             if not session_id or "/" in session_id or "\\" in session_id or session_id.startswith("."):
