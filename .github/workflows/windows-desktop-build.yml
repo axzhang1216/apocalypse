@@ -7,19 +7,19 @@ on:
     branches:
       - main
     paths:
-      - 'skills_apocalypse/.release-v0.3.4'
+      - 'skills_apocalypse/.release-v0.3.5'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.4'
+        description: 'Release version, e.g. v0.3.5'
         required: true
-        default: 'v0.3.4'
+        default: 'v0.3.5'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.4') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.5') }}
 
 jobs:
   build:
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.4' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.5' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -202,7 +202,8 @@ jobs:
           - centered Apocalypse bootstrap progress when no cache exists
           - cache updates only after both WORLD and OPS refresh successfully
           - large discussion message blocks excluded from persistent boot cache
-          - packaged APP_VERSION is now stamped directly from the release tag
+          - desktop readiness probe no longer builds /api/world before the window opens
+          - packaged APP_VERSION is stamped directly from the release tag
           - background verified updater retained
           - x64 and native x86 installers
 
