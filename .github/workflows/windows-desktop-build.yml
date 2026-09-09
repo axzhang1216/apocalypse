@@ -7,19 +7,19 @@ on:
     branches:
       - main
     paths:
-      - 'skills_apocalypse/.release-v0.3.5'
+      - 'skills_apocalypse/.release-v0.3.6'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.5'
+        description: 'Release version, e.g. v0.3.6'
         required: true
-        default: 'v0.3.5'
+        default: 'v0.3.6'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.5') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.6') }}
 
 jobs:
   build:
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.5' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.6' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -198,11 +198,10 @@ jobs:
           ## Apocalypse $VERSION_TAG
 
           - instant local WORLD / OPS snapshot restore on startup
-          - stale-while-revalidate refresh: cached UI first, live local state replaces it in background
           - centered Apocalypse bootstrap progress when no cache exists
-          - cache updates only after both WORLD and OPS refresh successfully
-          - large discussion message blocks excluded from persistent boot cache
           - desktop readiness probe no longer builds /api/world before the window opens
+          - Activity day detail now resets on every focus exit so the 10x7 grid always returns cleanly
+          - cached state updates only after both WORLD and OPS refresh successfully
           - packaged APP_VERSION is stamped directly from the release tag
           - background verified updater retained
           - x64 and native x86 installers
