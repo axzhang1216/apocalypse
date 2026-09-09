@@ -44,5 +44,6 @@ jobs:
         run: |
           node --check skills_apocalypse/spatial_os.js
           node --check skills_apocalypse/onboarding_ui.js
+          node --check skills_apocalypse/ops_polish.js
       - name: Shell syntax
         run: bash -n skills_apocalypse/install.sh skills_apocalypse/apocalypse-ui
