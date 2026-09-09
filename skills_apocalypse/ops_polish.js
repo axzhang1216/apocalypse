@@ -16,9 +16,35 @@
 
   const zone=document.querySelector('.activity-zone');
   const close=document.getElementById('closeDayLog');
+  const daySummary=document.getElementById('daySummary');
+  const dayStats=document.getElementById('dayStats');
+  const dayWork=document.getElementById('dayWork');
+  const dayDate=document.getElementById('dayLogDate');
+  function restoreActivityGrid(){
+    if(!zone)return;
+    zone.classList.remove('day-open');
+    if(daySummary)daySummary.textContent='';
+    if(dayStats)dayStats.innerHTML='';
+    if(dayWork)dayWork.innerHTML='';
+    if(dayDate)dayDate.textContent='DAY LOG';
+  }
   close?.addEventListener('click',()=>{
-    zone?.classList.remove('day-open');
+    restoreActivityGrid();
     // Keep Activity focused so another day can be opened without shrinking the panel.
+  },true);
+  // Leaving the enlarged Activity panel must never carry the day-detail state
+  // back into the dashboard. This covers veil clicks, Escape, and any future
+  // code path that removes `.focus` without touching `.day-open`.
+  if(zone){
+    new MutationObserver(()=>{
+      if(!zone.classList.contains('focus')&&zone.classList.contains('day-open'))restoreActivityGrid();
+    }).observe(zone,{attributes:true,attributeFilter:['class']});
+  }
+  document.addEventListener('click',e=>{
+    if(e.target.closest('#opsFocusVeil')&&zone?.classList.contains('day-open'))restoreActivityGrid();
+  },true);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&zone?.classList.contains('day-open'))restoreActivityGrid();
   },true);
 
   // Staged desktop updater. spatial_os.html owns the base Settings menu; this
