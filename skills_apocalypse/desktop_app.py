@@ -20,11 +20,18 @@ import server as core
 import spatial_server_plus as spatial
 
 URL = f"http://localhost:{spatial.PORT}"
+HEALTH_URL = URL + "/api/settings/status"
 
 
 def _alive(timeout: float = 0.7) -> bool:
+    """Cheap server readiness probe.
+
+    Do not use /api/world here: building WORLD scans transcripts/workspace and
+    made desktop startup do the expensive work once before the window opened,
+    then again when the UI called refreshAll().
+    """
     try:
-        with urllib.request.urlopen(URL + "/api/world", timeout=timeout) as response:
+        with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as response:
             return 200 <= response.status < 300
     except Exception:
         return False
@@ -32,7 +39,7 @@ def _alive(timeout: float = 0.7) -> bool:
 
 def _port_occupied() -> bool:
     try:
-        with urllib.request.urlopen(URL + "/api/settings/status", timeout=0.5) as response:
+        with urllib.request.urlopen(HEALTH_URL, timeout=0.5) as response:
             return 200 <= response.status < 300
     except Exception:
         return False
