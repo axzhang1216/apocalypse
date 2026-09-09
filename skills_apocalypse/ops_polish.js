@@ -163,7 +163,7 @@
   function compactWorld(w){
     // Discussion messages can be fetched on demand and are often the largest
     // part of WORLD. Excluding them keeps the persistent snapshot small.
-    try{return {...w,objects:(w.objects||[]).map(o=>o?.type==='decision'&&o.messages?{...o,messages:[]}:o)}catch{return w}
+    try{return {...w,objects:(w.objects||[]).map(o=>o?.type==='decision'&&o.messages?{...o,messages:[]}:o)}}catch{return w}
   }
   function write(w,o){
     try{localStorage.setItem(KEY,JSON.stringify({schema:SCHEMA,saved_at:Date.now(),world:compactWorld(w),ops:o}))}
