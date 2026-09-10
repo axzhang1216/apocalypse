@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import app_lifecycle
+import grok_quota
 import onboarding
 import ops_analysis
 import quota_adapters
@@ -20,6 +21,10 @@ ANALYSIS_FILE=core.DATA_DIR/"ops_analysis.json"
 ONBOARDING_JS=Path(__file__).resolve().parent/"onboarding_ui.js"
 OPS_POLISH_CSS=Path(__file__).resolve().parent/"ops_polish.css"
 OPS_POLISH_JS=Path(__file__).resolve().parent/"ops_polish.js"
+# Grok's auth.json can contain multiple issuers. Use the dedicated adapter that
+# follows Orca's issuer-selection/GROK_HOME semantics rather than the older
+# first-entry implementation kept in quota_adapters for compatibility.
+quota_adapters._OFFICIAL_FETCHERS["Grok"]=grok_quota.fetch_grok_quota
 spatial.quotas=quota_adapters.get_quotas
 
 
