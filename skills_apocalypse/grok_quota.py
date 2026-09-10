@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Grok Build/SuperGrok quota reader.
 
-Mirrors Orca's Grok usage strategy while keeping all OAuth secrets local.
-The public diagnostic surface intentionally returns metadata only: never the
-access token, cookies, or raw billing response.
+Reads the same Grok CLI OAuth session as Orca, keeps all secrets local, and
+queries Grok's billing endpoint for the weekly plan window. Grok currently does
+not expose a 5-hour window in this payload, so Apocalypse intentionally renders
+that UI-only window as 100% remaining when authentication is valid.
 """
 from __future__ import annotations
 
@@ -27,12 +28,27 @@ def _empty_window() -> dict[str, Any]:
     return {"remaining": 0.0, "reset_in_min": 0, "available": False}
 
 
+def _default_five_hour() -> dict[str, Any]:
+    # Grok/SuperGrok's current billing payload exposes a weekly usage period but
+    # no separate 5-hour quota. The OPS UI always has a 5H row, so for a valid
+    # Grok session we deliberately show that unsupported window as fully
+    # available instead of displaying NO DATA.
+    return {
+        "remaining": 1.0,
+        "reset_in_min": 0,
+        "available": True,
+        "used_percent": "0",
+        "synthetic": True,
+        "reason": "provider_does_not_report_5h",
+    }
+
+
 def _empty_row(status: str, *, auth: str = "ok", error: str | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {
         "provider": "Grok",
         "status": status,
         "auth": auth,
-        "five_hour": _empty_window(),
+        "five_hour": _default_five_hour() if auth == "ok" else _empty_window(),
         "weekly": _empty_window(),
         "source": "official",
     }
@@ -92,41 +108,6 @@ def _preferred_key(key: str) -> bool:
     return key == PREFERRED_ISSUER or key.startswith(PREFERRED_ISSUER + "::")
 
 
-def read_auth_session() -> dict[str, Any]:
-    """Read Grok CLI OAuth session without exposing it outside this module."""
-    data = _load_auth()
-    if not data:
-        return {"status": "missing", "path": str(_auth_path())}
-
-    preferred_seen = False
-    expired_preferred: tuple[str, dict[str, Any]] | None = None
-    fallback: tuple[str, dict[str, Any]] | None = None
-
-    for issuer, raw in data.items():
-        is_preferred = _preferred_key(str(issuer))
-        preferred_seen = preferred_seen or is_preferred
-        if not isinstance(raw, dict) or not isinstance(raw.get("key"), str) or not raw.get("key"):
-            continue
-        if is_preferred:
-            if _is_fresh(raw):
-                return _session("ok", str(issuer), raw)
-            if expired_preferred is None:
-                expired_preferred = (str(issuer), raw)
-            continue
-        if fallback is None:
-            fallback = (str(issuer), raw)
-
-    if preferred_seen:
-        if expired_preferred:
-            return _session("expired", *expired_preferred)
-        return {"status": "missing", "path": str(_auth_path())}
-
-    if fallback:
-        issuer, entry = fallback
-        return _session("ok" if _is_fresh(entry) else "expired", issuer, entry)
-    return {"status": "missing", "path": str(_auth_path())}
-
-
 def _session(status: str, issuer: str, entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": status,
@@ -139,12 +120,42 @@ def _session(status: str, issuer: str, entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def read_auth_session() -> dict[str, Any]:
+    data = _load_auth()
+    if not data:
+        return {"status": "missing", "path": str(_auth_path())}
+
+    preferred_seen = False
+    expired_preferred: tuple[str, dict[str, Any]] | None = None
+    fallback: tuple[str, dict[str, Any]] | None = None
+    for issuer, raw in data.items():
+        preferred = _preferred_key(str(issuer))
+        preferred_seen = preferred_seen or preferred
+        if not isinstance(raw, dict) or not isinstance(raw.get("key"), str) or not raw.get("key"):
+            continue
+        if preferred:
+            if _is_fresh(raw):
+                return _session("ok", str(issuer), raw)
+            if expired_preferred is None:
+                expired_preferred = (str(issuer), raw)
+        elif fallback is None:
+            fallback = (str(issuer), raw)
+
+    if preferred_seen:
+        if expired_preferred:
+            return _session("expired", *expired_preferred)
+        return {"status": "missing", "path": str(_auth_path())}
+    if fallback:
+        issuer, entry = fallback
+        return _session("ok" if _is_fresh(entry) else "expired", issuer, entry)
+    return {"status": "missing", "path": str(_auth_path())}
+
+
 def _money(value: Any) -> float | None:
     if not isinstance(value, dict):
         return None
-    raw = value.get("val")
     try:
-        num = float(raw)
+        num = float(value.get("val"))
         return num if num == num else None
     except (TypeError, ValueError):
         return None
@@ -154,7 +165,9 @@ def _timestamps_match(a: Any, b: Any) -> bool:
     if not a or not b:
         return False
     try:
-        return datetime.fromisoformat(str(a).replace("Z", "+00:00")).timestamp() == datetime.fromisoformat(str(b).replace("Z", "+00:00")).timestamp()
+        pa = datetime.fromisoformat(str(a).replace("Z", "+00:00")).timestamp()
+        pb = datetime.fromisoformat(str(b).replace("Z", "+00:00")).timestamp()
+        return pa == pb
     except Exception:
         return False
 
@@ -168,15 +181,6 @@ def _confirmed_weekly_period(cfg: dict[str, Any]) -> bool:
     )
 
 
-def _usage_scalars(cfg: dict[str, Any]) -> list[float]:
-    vals = []
-    for key in ("onDemandCap", "onDemandUsed", "prepaidBalance", "monthlyLimit", "used"):
-        val = _money(cfg.get(key))
-        if val is not None:
-            vals.append(val)
-    return vals
-
-
 def _has_monthly_budget(cfg: dict[str, Any]) -> bool:
     limit = _money(cfg.get("monthlyLimit"))
     used = _money(cfg.get("used"))
@@ -185,15 +189,17 @@ def _has_monthly_budget(cfg: dict[str, Any]) -> bool:
 
 def _weekly_percent(cfg: dict[str, Any]) -> float | None:
     if "creditUsagePercent" in cfg:
-        raw = cfg.get("creditUsagePercent")
         try:
-            value = float(raw)
+            value = float(cfg.get("creditUsagePercent"))
             return value if value == value else None
         except (TypeError, ValueError):
             return None
-
-    scalars = _usage_scalars(cfg)
-    if any(v == 0 for v in scalars) or _has_monthly_budget(cfg):
+    values = []
+    for key in ("onDemandCap", "onDemandUsed", "prepaidBalance", "monthlyLimit", "used"):
+        val = _money(cfg.get(key))
+        if val is not None:
+            values.append(val)
+    if any(v == 0 for v in values) or _has_monthly_budget(cfg):
         return None
     return 0.0 if _confirmed_weekly_period(cfg) else None
 
@@ -229,28 +235,21 @@ def _billing_request(session: dict[str, Any]) -> tuple[int, dict[str, Any] | Non
             data = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
             return int(response.status), data if isinstance(data, dict) else None
     except urllib.error.HTTPError as exc:
-        # Never return the response body: error bodies can contain account data.
         return int(exc.code), None
 
 
 def diagnose_grok() -> dict[str, Any]:
-    """Return a deliberately secret-free Grok auth/billing diagnostic."""
     path = _auth_path()
     data = _load_auth()
-    preferred_issuers = []
-    entry_count = 0
-    if isinstance(data, dict):
-        entry_count = len(data)
-        preferred_issuers = [str(k) for k in data if _preferred_key(str(k))]
-
+    preferred = [str(k) for k in data if _preferred_key(str(k))] if isinstance(data, dict) else []
     session = read_auth_session()
     result: dict[str, Any] = {
         "provider": "Grok",
         "grok_home": str(_grok_home()),
         "grok_home_from_env": bool(os.environ.get("GROK_HOME", "").strip()),
         "auth_file_exists": path.exists(),
-        "auth_entry_count": entry_count,
-        "preferred_issuer_present": bool(preferred_issuers),
+        "auth_entry_count": len(data) if isinstance(data, dict) else 0,
+        "preferred_issuer_present": bool(preferred),
         "auth_status": session.get("status") or "missing",
         "selected_issuer": session.get("issuer"),
         "user_id_present": bool(session.get("user_id")),
@@ -264,31 +263,22 @@ def diagnose_grok() -> dict[str, Any]:
         "weekly_field_present": False,
         "weekly_percent_available": False,
         "monthly_budget_present": False,
+        "five_hour_source": "default_100_percent",
     }
-
-    # Missing/expired auth is already diagnostic enough; do not send stale
-    # credentials to the billing service just to obtain a predictable 401.
     if session.get("status") != "ok":
         result["conclusion"] = "LOGIN REQUIRED" if session.get("status") == "missing" else "TOKEN STALE"
         return result
-
     try:
-        status, data = _billing_request(session)
+        status, payload = _billing_request(session)
     except Exception as exc:
         result["billing_error"] = type(exc).__name__
         result["conclusion"] = "BILLING REQUEST FAILED"
         return result
-
     result["billing_http"] = status
-    if status != 200 or not isinstance(data, dict):
-        result["conclusion"] = {
-            401: "TOKEN REJECTED",
-            403: "BILLING FORBIDDEN",
-            412: "NO PERSONAL BILLING CONTEXT",
-        }.get(status, "BILLING HTTP ERROR")
+    if status != 200 or not isinstance(payload, dict):
+        result["conclusion"] = {401: "TOKEN REJECTED", 403: "BILLING FORBIDDEN", 412: "NO PERSONAL BILLING CONTEXT"}.get(status, "BILLING HTTP ERROR")
         return result
-
-    cfg = data.get("config") if isinstance(data.get("config"), dict) else data
+    cfg = payload.get("config") if isinstance(payload.get("config"), dict) else payload
     period = cfg.get("currentPeriod") if isinstance(cfg.get("currentPeriod"), dict) else {}
     pct = _weekly_percent(cfg)
     result.update({
@@ -315,12 +305,10 @@ def fetch_grok_quota() -> dict[str, Any]:
         return {"auth": "missing"}
     if session["status"] == "expired":
         return {"auth": "expired"}
-
     try:
-        status, data = _billing_request(session)
+        status, payload = _billing_request(session)
     except Exception as exc:
         return _empty_row("BILLING ERROR", error=f"Grok billing request failed: {type(exc).__name__}")
-
     if status == 401:
         return {"auth": "expired"}
     if status == 403:
@@ -329,14 +317,13 @@ def fetch_grok_quota() -> dict[str, Any]:
         return _empty_row("NO PERSONAL BILLING", error="Grok billing endpoint returned HTTP 412 for this account/team")
     if status != 200:
         return _empty_row("BILLING ERROR", error=f"Grok billing endpoint returned HTTP {status}")
-    if not isinstance(data, dict):
+    if not isinstance(payload, dict):
         return _empty_row("NO WEEKLY DATA", error="Grok billing response was not an object")
 
-    cfg = data.get("config") if isinstance(data.get("config"), dict) else data
+    cfg = payload.get("config") if isinstance(payload.get("config"), dict) else payload
     pct = _weekly_percent(cfg)
     if pct is None:
         return _empty_row("NO WEEKLY DATA", error="Grok did not report a weekly usage percentage")
-
     pct = max(0.0, min(100.0, pct))
     weekly = {
         "remaining": max(0.0, 1.0 - pct / 100.0),
@@ -349,7 +336,7 @@ def fetch_grok_quota() -> dict[str, Any]:
         "provider": "Grok",
         "status": "OFFICIAL",
         "auth": "ok",
-        "five_hour": _empty_window(),
+        "five_hour": _default_five_hour(),
         "weekly": weekly,
         "source": "official",
     }
