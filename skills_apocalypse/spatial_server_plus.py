@@ -209,6 +209,9 @@ class Handler(spatial.Handler):
 
  def do_POST(self):
   path=urlparse(self.path).path
+  if path=="/api/quotas/grok/diagnose":
+   try:return self.send_json({"ok":True,**grok_quota.diagnose_grok()})
+   except Exception as e:return self.send_json({"ok":False,"error":f"Grok diagnostic failed: {type(e).__name__}"},500)
   if path=="/api/onboarding/complete":
    try:return self.send_json(onboarding.complete(_read_json_body(self)))
    except ValueError as e:return self.send_json({"ok":False,"error":str(e)},400)
