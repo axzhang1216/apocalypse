@@ -30,11 +30,7 @@
   }
   close?.addEventListener('click',()=>{
     restoreActivityGrid();
-    // Keep Activity focused so another day can be opened without shrinking the panel.
   },true);
-  // Leaving the enlarged Activity panel must never carry the day-detail state
-  // back into the dashboard. This covers veil clicks, Escape, and any future
-  // code path that removes `.focus` without touching `.day-open`.
   if(zone){
     new MutationObserver(()=>{
       if(!zone.classList.contains('focus')&&zone.classList.contains('day-open'))restoreActivityGrid();
@@ -47,8 +43,6 @@
     if(e.key==='Escape'&&zone?.classList.contains('day-open'))restoreActivityGrid();
   },true);
 
-  // Staged desktop updater. spatial_os.html owns the base Settings menu; this
-  // layer replaces only its old synchronous "download + launch installer" action.
   const updateBtn=document.getElementById('updateBtn');
   const updateMeta=document.getElementById('updateMeta');
   const settingsBtn=document.getElementById('settingsBtn');
@@ -63,7 +57,6 @@
   function mb(n){return (Number(n||0)/1048576).toFixed(1)}
 
   if(updateBtn){
-    // Remove the legacy onclick assigned by spatial_os.html.
     updateBtn.onclick=null;
     const progress=document.createElement('div');
     progress.className='update-progress';
@@ -163,15 +156,11 @@
       }
     },true);
 
-    // Opening Settings restores a persisted staged update after app/UI reloads.
     settingsBtn?.addEventListener('click',()=>setTimeout(fetchState,80));
   }
 })();
 
 (()=>{
-  // Fast boot snapshot. The canonical refresh still runs exactly as before;
-  // this only paints the last successful WORLD + OPS while that local refresh
-  // is being computed. A fresh pair atomically replaces the snapshot.
   const KEY='apocalypse.bootSnapshot.v1',SCHEMA=1;
   let cached=null,cachedWorld=null,cachedOps=null,overlay=null,bar=null,label=null,pct=null,note=null;
   let restored=false,done=false,started=performance.now(),previewTimer=null;
@@ -187,8 +176,6 @@
     return null;
   }
   function compactWorld(w){
-    // Discussion messages can be fetched on demand and are often the largest
-    // part of WORLD. Excluding them keeps the persistent snapshot small.
     try{return {...w,objects:(w.objects||[]).map(o=>o?.type==='decision'&&o.messages?{...o,messages:[]}:o)}}catch{return w}
   }
   function write(w,o){
@@ -216,8 +203,6 @@
     try{
       cachedWorld=cached.world;cachedOps=cached.ops;WORLD=cachedWorld;OPS=cachedOps;prepareLayout();renderOps();setTimeout(()=>{try{fitWeather()}catch{}},35);try{drawStars(performance.now());drawUniverse(performance.now())}catch{}
       restored=true;document.documentElement.dataset.apocalypseBootCache='restored';
-      // Four lightweight preview frames per second until the canonical loop is
-      // expected to take over. This prevents a static black canvas during a slow scan.
       const until=performance.now()+5000;previewTimer=setInterval(()=>{if(performance.now()>until){clearInterval(previewTimer);previewTimer=null;return}try{drawStars(performance.now());drawUniverse(performance.now())}catch{}},250);
       return true;
     }catch(e){console.warn('Apocalypse cached snapshot could not be rendered',e);restored=false;return false}
@@ -243,4 +228,64 @@
     clear(){try{localStorage.removeItem(KEY)}catch{}},
     savedAt(){try{return JSON.parse(localStorage.getItem(KEY)||'null')?.saved_at||null}catch{return null}}
   };
+})();
+
+(()=>{
+  const quotaRows=document.getElementById('quotaRows');
+  if(!quotaRows)return;
+
+  const style=document.createElement('style');
+  style.textContent=`
+    .grok-diag-btn{margin:5px 0 2px;padding:3px 7px;border:1px solid rgba(111,148,184,.24);border-radius:3px;background:rgba(111,148,184,.045);color:#91b3d2;font:600 calc(8px * var(--apoc-dynamic-scale)) Consolas,monospace;letter-spacing:.08em;cursor:pointer}.grok-diag-btn:hover{border-color:rgba(111,148,184,.48);background:rgba(111,148,184,.09)}.grok-diag-btn:disabled{opacity:.45;cursor:default}.grok-diag{display:none;margin:5px 0 7px;padding:7px 8px;border-left:1px solid rgba(111,148,184,.25);background:rgba(8,12,17,.32);font:600 calc(7.5px * var(--apoc-dynamic-scale)) Consolas,monospace;line-height:1.55;color:#aab5bf}.grok-diag.open{display:block}.grok-diag-row{display:grid;grid-template-columns:112px 1fr;gap:8px}.grok-diag-row b{font-weight:600;color:#697985}.grok-diag-row span{color:#c4cbd1;overflow-wrap:anywhere}.grok-diag-row.hot span{color:#d8b63f}.grok-diag-row.ok span{color:#8fb0cc}.grok-diag-copy{margin-top:7px;border:0;background:none;padding:0;color:#778fa5;font:600 7px Consolas,monospace;letter-spacing:.08em;cursor:pointer}`;
+  document.head.appendChild(style);
+
+  const ordered=[
+    ['GROK HOME','grok_home'],['AUTH FILE','auth_file_exists'],['AUTH STATUS','auth_status'],
+    ['ISSUER','selected_issuer'],['USER ID','user_id_present'],['TEAM ID','team_id_present'],
+    ['EXPIRES','expires_at'],['TOKEN FRESH','token_fresh'],['BILLING HOST','billing_host'],
+    ['BILLING HTTP','billing_http'],['PLAN','subscription_tier'],['PERIOD','period_type'],
+    ['WEEKLY FIELD','weekly_field_present'],['WEEKLY AVAILABLE','weekly_percent_available'],
+    ['WEEKLY USED','weekly_used_percent'],['MONTHLY BUDGET','monthly_budget_present'],['CONCLUSION','conclusion']
+  ];
+  function shown(k,v){
+    if(v===null||v===undefined||v==='')return '—';
+    if(typeof v==='boolean')return v?'YES':'NO';
+    if(k==='weekly_used_percent')return `${v}%`;
+    return String(v);
+  }
+  function diagText(d){return ordered.map(([label,key])=>`${label}: ${shown(key,d[key])}`).join('\n')}
+  function render(panel,d){
+    panel.innerHTML='';
+    for(const [label,key] of ordered){
+      const row=document.createElement('div');
+      const value=shown(key,d[key]);
+      row.className='grok-diag-row'+(key==='conclusion'?' hot':(key==='billing_http'&&Number(d[key])===200?' ok':''));
+      const b=document.createElement('b'),span=document.createElement('span');b.textContent=label;span.textContent=value;row.append(b,span);panel.appendChild(row);
+    }
+    const copy=document.createElement('button');copy.className='grok-diag-copy';copy.textContent='COPY DIAGNOSTIC';
+    copy.onclick=async e=>{e.stopPropagation();try{await navigator.clipboard.writeText(diagText(d));copy.textContent='COPIED'}catch{copy.textContent='COPY FAILED'}};
+    panel.appendChild(copy);panel.classList.add('open');
+  }
+  function ensure(){
+    for(const card of quotaRows.querySelectorAll('.qprovider')){
+      const name=(card.querySelector('.qhead span')?.textContent||'').trim().toUpperCase();
+      if(name!=='GROK'||card.querySelector('.grok-diag-btn'))continue;
+      const btn=document.createElement('button');btn.className='grok-diag-btn';btn.textContent='DIAGNOSE';
+      const panel=document.createElement('div');panel.className='grok-diag';
+      const head=card.querySelector('.qhead');(head||card.firstChild)?.after(btn,panel);
+      btn.onclick=async e=>{
+        e.stopPropagation();
+        if(panel.classList.contains('open')){panel.classList.remove('open');return}
+        btn.disabled=true;btn.textContent='DIAGNOSING…';panel.classList.add('open');panel.textContent='READING LOCAL GROK SESSION · CHECKING BILLING…';
+        try{
+          const r=await fetch('/api/quotas/grok/diagnose',{method:'POST',cache:'no-store'}),d=await r.json();
+          if(!r.ok||d.ok===false)throw new Error(d.error||`HTTP ${r.status}`);
+          render(panel,d);btn.textContent='DIAGNOSE';
+        }catch(err){panel.textContent='DIAGNOSTIC FAILED · '+err.message;btn.textContent='RETRY DIAGNOSE'}
+        finally{btn.disabled=false}
+      };
+    }
+  }
+  new MutationObserver(ensure).observe(quotaRows,{childList:true,subtree:true});
+  ensure();
 })();
