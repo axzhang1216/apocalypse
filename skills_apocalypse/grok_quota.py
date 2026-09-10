@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """Grok Build/SuperGrok quota reader.
 
-This mirrors Orca's current Grok usage strategy closely enough for Apocalypse:
-- read the same local Grok CLI auth session
-- prefer the first-party https://auth.x.ai issuer over stale legacy issuers
-- respect GROK_HOME
-- reject tokens inside Grok's 5-minute early-expiry window
-- query the CLI billing endpoint with Grok CLI auth headers
-- publish weekly usage only when the response actually supports a weekly value
-
-The Grok billing endpoint is an undocumented product endpoint and may change.
-No access token is returned to the Apocalypse frontend.
+Mirrors Orca's Grok usage strategy while keeping all OAuth secrets local.
+The public diagnostic surface intentionally returns metadata only: never the
+access token, cookies, or raw billing response.
 """
 from __future__ import annotations
 
@@ -18,6 +11,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -56,9 +50,19 @@ def _auth_path() -> Path:
     return _grok_home() / "auth.json"
 
 
+def _proxy_base() -> str:
+    return os.environ.get("GROK_CLI_CHAT_PROXY_BASE_URL", "").strip().rstrip("/") or DEFAULT_PROXY_BASE
+
+
 def _billing_url() -> str:
-    base = os.environ.get("GROK_CLI_CHAT_PROXY_BASE_URL", "").strip().rstrip("/")
-    return (base or DEFAULT_PROXY_BASE) + "/billing?format=credits"
+    return _proxy_base() + "/billing?format=credits"
+
+
+def _billing_host() -> str:
+    try:
+        return urllib.parse.urlsplit(_billing_url()).netloc or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def _load_auth() -> dict[str, Any] | None:
@@ -89,12 +93,7 @@ def _preferred_key(key: str) -> bool:
 
 
 def read_auth_session() -> dict[str, Any]:
-    """Read Grok CLI OAuth session without exposing it outside this module.
-
-    A subtle but important detail copied from Orca: auth.json can contain an old
-    issuer before the current xAI OAuth entry. Choosing the first object with a
-    `key` can therefore keep reporting an expired login after re-authentication.
-    """
+    """Read Grok CLI OAuth session without exposing it outside this module."""
     data = _load_auth()
     if not data:
         return {"status": "missing", "path": str(_auth_path())}
@@ -117,7 +116,6 @@ def read_auth_session() -> dict[str, Any]:
         if fallback is None:
             fallback = (str(issuer), raw)
 
-    # If a first-party issuer exists, alternate issuers must not shadow it.
     if preferred_seen:
         if expired_preferred:
             return _session("expired", *expired_preferred)
@@ -186,7 +184,6 @@ def _has_monthly_budget(cfg: dict[str, Any]) -> bool:
 
 
 def _weekly_percent(cfg: dict[str, Any]) -> float | None:
-    # The explicit field is the authoritative weekly credit value.
     if "creditUsagePercent" in cfg:
         raw = cfg.get("creditUsagePercent")
         try:
@@ -196,12 +193,8 @@ def _weekly_percent(cfg: dict[str, Any]) -> float | None:
             return None
 
     scalars = _usage_scalars(cfg)
-    # Match Orca's current rule: if the encoder explicitly emits zero money
-    # fields, an omitted weekly percentage means "not reported", not 0%.
     if any(v == 0 for v in scalars) or _has_monthly_budget(cfg):
         return None
-    # Proto3 JSON can omit a default zero. Infer 0 only when the payload proves
-    # the current period itself is weekly and there is no other usage evidence.
     return 0.0 if _confirmed_weekly_period(cfg) else None
 
 
@@ -228,6 +221,94 @@ def _headers(session: dict[str, Any]) -> dict[str, str]:
     return headers
 
 
+def _billing_request(session: dict[str, Any]) -> tuple[int, dict[str, Any] | None]:
+    req = urllib.request.Request(_billing_url(), headers=_headers(session))
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            raw = response.read()
+            data = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+            return int(response.status), data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as exc:
+        # Never return the response body: error bodies can contain account data.
+        return int(exc.code), None
+
+
+def diagnose_grok() -> dict[str, Any]:
+    """Return a deliberately secret-free Grok auth/billing diagnostic."""
+    path = _auth_path()
+    data = _load_auth()
+    preferred_issuers = []
+    entry_count = 0
+    if isinstance(data, dict):
+        entry_count = len(data)
+        preferred_issuers = [str(k) for k in data if _preferred_key(str(k))]
+
+    session = read_auth_session()
+    result: dict[str, Any] = {
+        "provider": "Grok",
+        "grok_home": str(_grok_home()),
+        "grok_home_from_env": bool(os.environ.get("GROK_HOME", "").strip()),
+        "auth_file_exists": path.exists(),
+        "auth_entry_count": entry_count,
+        "preferred_issuer_present": bool(preferred_issuers),
+        "auth_status": session.get("status") or "missing",
+        "selected_issuer": session.get("issuer"),
+        "user_id_present": bool(session.get("user_id")),
+        "team_id_present": bool(session.get("team_id")),
+        "expires_at": session.get("expires_at"),
+        "token_fresh": session.get("status") == "ok",
+        "billing_host": _billing_host(),
+        "billing_http": None,
+        "subscription_tier": None,
+        "period_type": None,
+        "weekly_field_present": False,
+        "weekly_percent_available": False,
+        "monthly_budget_present": False,
+    }
+
+    # Missing/expired auth is already diagnostic enough; do not send stale
+    # credentials to the billing service just to obtain a predictable 401.
+    if session.get("status") != "ok":
+        result["conclusion"] = "LOGIN REQUIRED" if session.get("status") == "missing" else "TOKEN STALE"
+        return result
+
+    try:
+        status, data = _billing_request(session)
+    except Exception as exc:
+        result["billing_error"] = type(exc).__name__
+        result["conclusion"] = "BILLING REQUEST FAILED"
+        return result
+
+    result["billing_http"] = status
+    if status != 200 or not isinstance(data, dict):
+        result["conclusion"] = {
+            401: "TOKEN REJECTED",
+            403: "BILLING FORBIDDEN",
+            412: "NO PERSONAL BILLING CONTEXT",
+        }.get(status, "BILLING HTTP ERROR")
+        return result
+
+    cfg = data.get("config") if isinstance(data.get("config"), dict) else data
+    period = cfg.get("currentPeriod") if isinstance(cfg.get("currentPeriod"), dict) else {}
+    pct = _weekly_percent(cfg)
+    result.update({
+        "subscription_tier": str(cfg.get("subscriptionTier") or "") or None,
+        "period_type": str(period.get("type") or "") or None,
+        "weekly_field_present": "creditUsagePercent" in cfg,
+        "weekly_percent_available": pct is not None,
+        "monthly_budget_present": _has_monthly_budget(cfg),
+        "reset_in_min": _reset_minutes(cfg) if pct is not None else None,
+    })
+    if pct is not None:
+        result["weekly_used_percent"] = round(max(0.0, min(100.0, pct)), 1)
+        result["conclusion"] = "WEEKLY QUOTA AVAILABLE"
+    elif _has_monthly_budget(cfg):
+        result["conclusion"] = "MONTHLY ONLY"
+    else:
+        result["conclusion"] = "SIGNED IN · WEEKLY NOT REPORTED"
+    return result
+
+
 def fetch_grok_quota() -> dict[str, Any]:
     session = read_auth_session()
     if session["status"] == "missing":
@@ -235,26 +316,22 @@ def fetch_grok_quota() -> dict[str, Any]:
     if session["status"] == "expired":
         return {"auth": "expired"}
 
-    req = urllib.request.Request(_billing_url(), headers=_headers(session))
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        # 401 really is an auth refresh problem. 403 is not necessarily one:
-        # paid/team OAuth sessions can be valid for chat but denied by this
-        # product billing endpoint, so prompting an endless re-login is wrong.
-        if exc.code == 401:
-            return {"auth": "expired"}
-        if exc.code == 403:
-            return _empty_row("BILLING UNAVAILABLE", error="Grok billing endpoint returned HTTP 403")
-        if exc.code == 412:
-            return _empty_row("NO PERSONAL BILLING", error="Grok billing endpoint returned HTTP 412 for this account/team")
-        return _empty_row("BILLING ERROR", error=f"Grok billing endpoint returned HTTP {exc.code}")
+        status, data = _billing_request(session)
     except Exception as exc:
         return _empty_row("BILLING ERROR", error=f"Grok billing request failed: {type(exc).__name__}")
 
+    if status == 401:
+        return {"auth": "expired"}
+    if status == 403:
+        return _empty_row("BILLING UNAVAILABLE", error="Grok billing endpoint returned HTTP 403")
+    if status == 412:
+        return _empty_row("NO PERSONAL BILLING", error="Grok billing endpoint returned HTTP 412 for this account/team")
+    if status != 200:
+        return _empty_row("BILLING ERROR", error=f"Grok billing endpoint returned HTTP {status}")
     if not isinstance(data, dict):
         return _empty_row("NO WEEKLY DATA", error="Grok billing response was not an object")
+
     cfg = data.get("config") if isinstance(data.get("config"), dict) else data
     pct = _weekly_percent(cfg)
     if pct is None:
@@ -279,6 +356,4 @@ def fetch_grok_quota() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Safe diagnostic: never print the token.
-    auth = read_auth_session()
-    print(json.dumps({k: v for k, v in auth.items() if k != "token"}, ensure_ascii=False, indent=2))
+    print(json.dumps(diagnose_grok(), ensure_ascii=False, indent=2))
