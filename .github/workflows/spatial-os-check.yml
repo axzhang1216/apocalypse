@@ -34,6 +34,7 @@ jobs:
             skills_apocalypse/analysis_harness.py \
             skills_apocalypse/ops_analysis.py \
             skills_apocalypse/quota_adapters.py \
+            skills_apocalypse/grok_quota.py \
             skills_apocalypse/app_lifecycle.py \
             skills_apocalypse/anthropic.py
       - name: Discovery smoke test
