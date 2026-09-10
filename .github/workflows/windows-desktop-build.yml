@@ -11,15 +11,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.6'
+        description: 'Release version, e.g. v0.3.7'
         required: true
-        default: 'v0.3.6'
+        default: 'v0.3.7'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.6') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.7') }}
 
 jobs:
   build:
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.6' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.7' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -197,12 +197,10 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - instant local WORLD / OPS snapshot restore on startup
-          - centered Apocalypse bootstrap progress when no cache exists
-          - desktop readiness probe no longer builds /api/world before the window opens
-          - Activity day detail now resets on every focus exit so the 10x7 grid always returns cleanly
-          - cached state updates only after both WORLD and OPS refresh successfully
-          - packaged APP_VERSION is stamped directly from the release tag
+          - add a safe Grok quota diagnostic inside the LLM QUOTA panel
+          - diagnose Grok CLI auth issuer selection, token freshness, billing HTTP status, and weekly quota availability without exposing secrets
+          - align Grok auth/session reading with Orca's current first-party issuer and GROK_HOME behavior
+          - distinguish token rejection from billing permission/account-context errors
           - background verified updater retained
           - x64 and native x86 installers
 
