@@ -9,11 +9,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import app_lifecycle
+import chat_archive
 import grok_quota
 import onboarding
 import ops_analysis
 import quota_adapters
 import spatial_server as spatial
+import volc_quota
 import workspace_init
 
 PORT=spatial.PORT;http=spatial.http;core=spatial.legacy
@@ -25,6 +27,7 @@ OPS_POLISH_JS=Path(__file__).resolve().parent/"ops_polish.js"
 # follows Orca's issuer-selection/GROK_HOME semantics rather than the older
 # first-entry implementation kept in quota_adapters for compatibility.
 quota_adapters._OFFICIAL_FETCHERS["Grok"]=grok_quota.fetch_grok_quota
+quota_adapters._OFFICIAL_FETCHERS["Volc Agent"]=volc_quota.fetch_volc_agent_quota
 spatial.quotas=quota_adapters.get_quotas
 
 
@@ -200,6 +203,7 @@ class Handler(spatial.Handler):
    try:return self.send_json(onboarding.discover())
    except Exception as e:return self.send_json({"ok":False,"error":str(e)},500)
   if path=="/api/quotas":return self.send_json(quota_adapters.get_quotas())
+  if path=="/api/storage/status":return self.send_json({"ok":True,**chat_archive.status()})
   if path=="/api/analysis":return self.send_json(_cached_analysis())
   if path=="/api/settings/status":return self.send_json({**app_lifecycle.app_status(),**onboarding.status()})
   if path=="/api/settings/update":
@@ -212,6 +216,17 @@ class Handler(spatial.Handler):
   if path=="/api/quotas/grok/diagnose":
    try:return self.send_json({"ok":True,**grok_quota.diagnose_grok()})
    except Exception as e:return self.send_json({"ok":False,"error":f"Grok diagnostic failed: {type(e).__name__}"},500)
+  if path=="/api/quotas/volc/diagnose":
+   try:return self.send_json({"ok":True,**volc_quota.diagnose_volc_agent()})
+   except Exception as e:return self.send_json({"ok":False,"error":f"Volc diagnostic failed: {type(e).__name__}"},500)
+  if path=="/api/storage/config":
+   try:
+    body=_read_json_body(self);return self.send_json({"ok":True,**chat_archive.set_root(str(body.get("root") or ""))})
+   except ValueError as e:return self.send_json({"ok":False,"error":str(e)},400)
+   except Exception as e:return self.send_json({"ok":False,"error":f"Storage configuration failed: {type(e).__name__}"},500)
+  if path=="/api/storage/sync":
+   try:return self.send_json({"ok":True,**chat_archive.request_sync()})
+   except Exception as e:return self.send_json({"ok":False,"error":f"Archive sync failed: {type(e).__name__}"},500)
   if path=="/api/onboarding/complete":
    try:return self.send_json(onboarding.complete(_read_json_body(self)))
    except ValueError as e:return self.send_json({"ok":False,"error":str(e)},400)
@@ -234,6 +249,7 @@ class Handler(spatial.Handler):
 
 
 if __name__=="__main__":
+ chat_archive.start_background_sync()
  core.DATA_DIR.mkdir(parents=True,exist_ok=True);core.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=core.DATA_DIR/"server.pid";pid.write_text(str(os.getpid()),encoding="utf-8");threading.Thread(target=core.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(("127.0.0.1",PORT),Handler);print(f"Apocalypse Spatial OS running at http://localhost:{PORT}",flush=True)
  try:srv.serve_forever()
  finally:
