@@ -32,7 +32,8 @@ DEFAULT_ROOT = DATA_DIR / "archive"
 DEFAULT_INTERVAL_SECONDS = 300
 COPY_CHUNK = 1024 * 1024
 
-_lock = threading.RLock()
+_sync_lock = threading.Lock()
+_state_lock = threading.RLock()
 _start_lock = threading.Lock()
 _started = False
 _wakeup = threading.Event()
@@ -116,7 +117,7 @@ def _status_from_disk() -> dict[str, Any]:
 def status() -> dict[str, Any]:
     cfg = config()
     previous = _status_from_disk()
-    with _lock:
+    with _state_lock:
         runtime = dict(_runtime)
     merged = {**previous, **runtime}
     merged.update({
@@ -366,7 +367,7 @@ def _sync_sources(root: Path, manifest: dict[str, Any], stats: dict[str, Any]) -
 
 
 def sync_now() -> dict[str, Any]:
-    if not _lock.acquire(blocking=False):
+    if not _sync_lock.acquire(blocking=False):
         return status()
     try:
         cfg = config()
@@ -374,9 +375,8 @@ def sync_now() -> dict[str, Any]:
             return status()
         root = Path(cfg["root"])
         root.mkdir(parents=True, exist_ok=True)
-        with_running = dict(_runtime)
-        with_running["running"] = True
-        _runtime.update(with_running)
+        with _state_lock:
+            _runtime["running"] = True
 
         manifest = _manifest(root)
         stats: dict[str, Any] = {
@@ -402,12 +402,14 @@ def sync_now() -> dict[str, Any]:
         stats["last_sync_at"] = datetime.now(timezone.utc).isoformat()
         if stats["errors"]:
             stats["last_error"] = "; ".join(stats["errors"][:5])
-        _runtime.update(stats)
+        with _state_lock:
+            _runtime.update(stats)
         _write_json(STATUS_FILE, stats)
         return status()
     finally:
-        _runtime["running"] = False
-        _lock.release()
+        with _state_lock:
+            _runtime["running"] = False
+        _sync_lock.release()
 
 
 def request_sync() -> dict[str, Any]:
