@@ -4,18 +4,22 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - 'skills_apocalypse/.release-v0.3.8'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.7'
+        description: 'Release version, e.g. v0.3.8'
         required: true
-        default: 'v0.3.7'
+        default: 'v0.3.8'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.8') }}
 
 jobs:
   build:
@@ -38,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.7' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.8' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -197,10 +201,12 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - add a safe Grok quota diagnostic inside the LLM QUOTA panel
-          - diagnose Grok CLI auth issuer selection, token freshness, billing HTTP status, and weekly quota availability without exposing secrets
-          - align Grok auth/session reading with Orca's current first-party issuer and GROK_HOME behavior
-          - distinguish token rejection from billing permission/account-context errors
+          - add Feishu user OAuth agenda sync and Activity day-log merge
+          - add official Volcengine Agent Plan 5h + weekly quota through existing Ark CLI login
+          - add Settings → Storage with native folder selection and Sync Now
+          - automatically archive local Claude, Codex, Pi, Hermes, OpenClaw, and Grok chat histories in the background
+          - preserve native transcripts where possible and export only conversation tables from SQLite-backed agents
+          - avoid copying auth/token/config stores into the archive
           - background verified updater retained
           - x64 and native x86 installers
 
