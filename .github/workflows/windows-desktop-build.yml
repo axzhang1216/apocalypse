@@ -7,19 +7,19 @@ on:
     branches:
       - main
     paths:
-      - 'skills_apocalypse/.release-v0.3.8'
+      - 'skills_apocalypse/.release-v0.3.9'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.8'
+        description: 'Release version, e.g. v0.3.9'
         required: true
-        default: 'v0.3.8'
+        default: 'v0.3.9'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.8') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.9') }}
 
 jobs:
   build:
@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = $env:VERSION_TAG
-          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.8' }
+          if (-not $tag.StartsWith('v')) { throw 'Version must start with v, e.g. v0.3.9' }
           $app = $tag.Substring(1)
           if ($app -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Invalid release version: $tag" }
           "APP_VERSION=$app" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
