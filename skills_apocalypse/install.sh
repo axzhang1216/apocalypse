@@ -13,13 +13,14 @@ echo "Installing Apocalypse Spatial OS → $DEST"
 mkdir -p "$DEST/hooks" "$HOME/bin"
 
 FILES=(
-  server.py spatial_server.py spatial_server_plus.py
+  server.py spatial_server.py spatial_server_plus.py repair.py
   spatial_os.html spatial_os.css spatial_os.js onboarding_ui.js
   ops_polish.css ops_polish.js
   apocalypse_ui.py apocalypse-ui apocalypse-ui.cmd
   workspace_init.py platform_utils.py
   agent_discovery.py onboarding.py analysis_harness.py anthropic.py
-  quota_adapters.py ops_analysis.py app_lifecycle.py
+  quota_adapters.py grok_quota.py volc_quota.py ops_analysis.py app_lifecycle.py
+  feishu_sync.py chat_archive.py
 )
 for f in "${FILES[@]}"; do cp "$SRC/$f" "$DEST/$f"; done
 cp "$SRC/hooks/on-tool.sh" "$DEST/hooks/on-tool.sh"
