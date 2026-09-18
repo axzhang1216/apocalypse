@@ -229,3 +229,107 @@
     savedAt(){try{return JSON.parse(localStorage.getItem(KEY)||'null')?.saved_at||null}catch{return null}}
   };
 })();
+
+
+(()=>{
+  // One-way local AI-agent chat archive. It never writes back to agent stores.
+  const menu=document.querySelector('.settings-menu');
+  const settingsBtn=document.getElementById('settingsBtn');
+  const globalStatus=document.getElementById('settingsStatus');
+  if(!menu||!globalStatus)return;
+
+  const section=document.createElement('div');
+  section.className='settings-section archive-settings';
+  section.innerHTML=
+    '<div class="settings-label"><span>STORAGE</span><b id="archiveState">AUTO SYNC</b></div>'+
+    '<div class="archive-path-row">'+
+      '<input id="archivePath" class="archive-path" type="text" spellcheck="false" autocomplete="off" placeholder="Archive folder">'+
+      '<button id="archiveBrowse" class="archive-mini">BROWSE</button>'+
+    '</div>'+
+    '<div class="archive-actions">'+
+      '<button id="archiveSave" class="archive-mini primary">SAVE</button>'+
+      '<button id="archiveSync" class="archive-mini">SYNC NOW</button>'+
+    '</div>'+
+    '<div class="archive-meta" id="archiveMeta">LOCAL AGENT CHAT ARCHIVE · ONE-WAY BACKUP</div>'+
+    '<div class="archive-agents" id="archiveAgents"></div>';
+  globalStatus.insertAdjacentElement('beforebegin',section);
+
+  const pathInput=section.querySelector('#archivePath');
+  const browseBtn=section.querySelector('#archiveBrowse');
+  const saveBtn=section.querySelector('#archiveSave');
+  const syncBtn=section.querySelector('#archiveSync');
+  const stateEl=section.querySelector('#archiveState');
+  const metaEl=section.querySelector('#archiveMeta');
+  const agentsEl=section.querySelector('#archiveAgents');
+  let current=null,poll=null;
+
+  function shortTime(value){
+    if(!value)return 'NOT YET';
+    const d=new Date(value);
+    if(Number.isNaN(d.getTime()))return 'UNKNOWN';
+    return d.toLocaleString([], {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  }
+  function render(s){
+    if(!s)return;
+    current=s;
+    if(document.activeElement!==pathInput)pathInput.value=s.root||'';
+    stateEl.textContent=s.running?'SYNCING…':'AUTO · '+Math.max(1,Math.round(Number(s.interval_seconds||300)/60))+' MIN';
+    stateEl.classList.toggle('live',!!s.running);
+    const copied=Number(s.copied_files||0),dbs=Number(s.exported_databases||0);
+    metaEl.textContent=s.last_error
+      ? 'LAST '+shortTime(s.last_sync_at)+' · '+s.last_error
+      : 'LAST '+shortTime(s.last_sync_at)+' · '+copied+' FILES · '+dbs+' DB EXPORTS';
+    metaEl.classList.toggle('err',!!s.last_error);
+    const entries=Object.entries(s.agents||{});
+    agentsEl.innerHTML=entries.length
+      ? entries.map(function(pair){const name=pair[0],v=pair[1]||{};return '<span><b>'+name.toUpperCase()+'</b> '+(Number(v.copied||0)+Number(v.unchanged||0)+Number(v.databases||0))+'</span>'}).join('')
+      : '<span>WAITING FOR FIRST SYNC</span>';
+    syncBtn.disabled=!!s.running;
+    syncBtn.textContent=s.running?'SYNCING…':'SYNC NOW';
+  }
+  async function load(){
+    try{
+      const r=await fetch('/api/storage/status',{cache:'no-store'}),j=await r.json();
+      if(!r.ok||j.ok===false)throw new Error(j.error||('HTTP '+r.status));
+      render(j);return j;
+    }catch(err){
+      metaEl.textContent='STORAGE STATUS FAILED · '+err.message;metaEl.classList.add('err');return null;
+    }
+  }
+  async function save(){
+    const root=pathInput.value.trim();
+    if(!root){metaEl.textContent='CHOOSE A STORAGE FOLDER';metaEl.classList.add('err');return}
+    saveBtn.disabled=true;saveBtn.textContent='SAVING…';
+    try{
+      const r=await fetch('/api/storage/config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({root:root})}),j=await r.json();
+      if(!r.ok||j.ok===false)throw new Error(j.error||('HTTP '+r.status));
+      render(j);metaEl.textContent='STORAGE SAVED · BACKGROUND SYNC QUEUED';metaEl.classList.remove('err');
+    }catch(err){metaEl.textContent='SAVE FAILED · '+err.message;metaEl.classList.add('err')}
+    finally{saveBtn.disabled=false;saveBtn.textContent='SAVE'}
+  }
+
+  browseBtn.addEventListener('click',async function(e){
+    e.preventDefault();e.stopPropagation();
+    try{
+      const api=window.pywebview&&window.pywebview.api;
+      const picker=api&&api.select_storage_folder;
+      if(!picker){pathInput.focus();metaEl.textContent='ENTER A LOCAL PATH, THEN SAVE';return}
+      browseBtn.disabled=true;browseBtn.textContent='OPENING…';
+      const j=await picker(pathInput.value||(current&&current.root)||'');
+      if(j&&j.ok&&j.path){pathInput.value=j.path;await save()}
+      else if(j&&j.error){throw new Error(j.error)}
+    }catch(err){metaEl.textContent='FOLDER PICKER FAILED · '+err.message;metaEl.classList.add('err')}
+    finally{browseBtn.disabled=false;browseBtn.textContent='BROWSE'}
+  });
+  saveBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();save()});
+  syncBtn.addEventListener('click',async function(e){
+    e.preventDefault();e.stopPropagation();syncBtn.disabled=true;syncBtn.textContent='QUEUED…';
+    try{
+      const r=await fetch('/api/storage/sync',{method:'POST'}),j=await r.json();
+      if(!r.ok||j.ok===false)throw new Error(j.error||('HTTP '+r.status));
+      render(j);clearInterval(poll);poll=setInterval(async function(){const s=await load();if(s&&!s.running){clearInterval(poll);poll=null}},650);
+    }catch(err){metaEl.textContent='SYNC FAILED · '+err.message;metaEl.classList.add('err');syncBtn.disabled=false;syncBtn.textContent='SYNC NOW'}
+  });
+  settingsBtn&&settingsBtn.addEventListener('click',function(){setTimeout(load,90)});
+  load();
+})();
