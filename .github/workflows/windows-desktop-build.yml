@@ -80,6 +80,10 @@ jobs:
             --hidden-import app_lifecycle `
             --hidden-import onboarding `
             --hidden-import agent_discovery `
+            --hidden-import chat_archive `
+            --hidden-import volc_quota `
+            --hidden-import grok_quota `
+            --hidden-import feishu_sync `
             --add-data "skills_apocalypse/spatial_os.html;." `
             --add-data "skills_apocalypse/spatial_os.css;." `
             --add-data "skills_apocalypse/spatial_os.js;." `
