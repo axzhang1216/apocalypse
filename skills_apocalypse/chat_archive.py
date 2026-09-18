@@ -32,7 +32,7 @@ DEFAULT_ROOT = DATA_DIR / "archive"
 DEFAULT_INTERVAL_SECONDS = 300
 COPY_CHUNK = 1024 * 1024
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _start_lock = threading.Lock()
 _started = False
 _wakeup = threading.Event()
@@ -337,7 +337,7 @@ def _sync_sources(root: Path, manifest: dict[str, Any], stats: dict[str, Any]) -
 
     pi_override = os.environ.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
     pi_root = Path(pi_override).expanduser() if pi_override else home / ".pi" / "agent" / "sessions"
-    _copy_group("pi", pi_root, ("**/*.jsonl",), chat_root / "pi", manifest, stats)
+    _copy_group("pi", pi_root, ("**/*.jsonl",), chat_root, manifest, stats)
 
     # Hermes canonical messages are SQLite-backed. Export only conversation
     # tables, never the whole database (which may contain unrelated state).
