@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs,urlparse
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import server as legacy
+import feishu_sync
 PORT=legacy.PORT;BASE=Path(__file__).resolve().parent
 SPATIAL_HTML=BASE/'spatial_os.html';SPATIAL_CSS=BASE/'spatial_os.css';SPATIAL_JS=BASE/'spatial_os.js'
 QUOTA_FILE=legacy.DATA_DIR/'quotas.json';SCHEDULE_FILE=legacy.DATA_DIR/'schedule.json'
@@ -109,10 +110,21 @@ def day_payload(text):
     for r in iter_activity() or []:
         if r['last'].date()!=target:continue
         sessions+=1;active+=r['active'];tools+=r['tools'];decisions+=pc.get(r['session_id'],0);m=lookup.get(r['session_id'],{});rows.append({'time':r['last'].astimezone().strftime('%H:%M'),'project':m.get('project_title') or r['project'],'title':m.get('summary') or m.get('user_goal') or 'Claude session '+r['session_id'][:8],'detail':m.get('user_goal') or f"{r['messages']} messages · {r['tools']} tool calls",'source':['session'],'artifacts':[],'session_id':r['session_id']})
-    rows.sort(key=lambda x:x['time']);names=[]
+    feishu_rows=[]
+    try:
+        for e in feishu_sync.fetch_day_events(target.isoformat()) or []:
+            feishu_rows.append({'time':e.get('start') or '—','project':'FEISHU','title':e.get('title') or 'Untitled event','detail':f"{e.get('start') or '—'}–{e.get('end') or '—'} · {e.get('project') or 'CALENDAR'}",'source':['feishu'],'artifacts':[],'session_id':e.get('id') or ''})
+    except Exception:
+        feishu_rows=[]
+    rows.extend(feishu_rows);rows.sort(key=lambda x:x['time']);names=[]
     for x in rows:
         if x['project'] not in names:names.append(x['project'])
-    return{'date':target.isoformat(),'summary':(f"{len(rows)} sessions across {', '.join(names[:3])}." if rows else 'No recorded coding activity for this day.'),'stats':{'active_hours':round(active/3600,2),'sessions':sessions,'tools':tools,'decisions':decisions},'completed_work':rows}
+    parts=[]
+    if sessions:parts.append(f"{sessions} sessions")
+    if feishu_rows:parts.append(f"{len(feishu_rows)} Feishu events")
+    if names:parts.append('across '+', '.join(names[:3]))
+    summary=(' · '.join(parts)+'.') if parts else 'No recorded coding activity or Feishu events for this day.'
+    return{'date':target.isoformat(),'summary':summary,'stats':{'active_hours':round(active/3600,2),'sessions':sessions,'tools':tools,'decisions':decisions,'feishu_events':len(feishu_rows)},'completed_work':rows}
 def adapter(path,fallback):
     try:
         if path.exists():return json.loads(path.read_text(encoding='utf-8')),'file'
@@ -123,7 +135,15 @@ def quotas():
     for r in rows:r.setdefault('source',src)
     return rows
 def schedule():
-    d={'events':[{'start':'09:30','end':'10:10','title':'Paper revision','project':'Climate Penalty','hard':True},{'start':'13:30','end':'14:10','title':'Spatial OS integration','project':'Apocalypse','hard':True}],'tasks':[{'title':'Review active session notes','priority':'medium','due':'TODAY','estimate_min':25},{'title':'Refresh workspace classifications','priority':'low','due':'TODAY','estimate_min':15}],'suggested':[]};x,src=adapter(SCHEDULE_FILE,d);x=x if isinstance(x,dict) else d;x.setdefault('events',[]);x.setdefault('tasks',[]);x.setdefault('suggested',[]);x['source']=src;return x
+    live, info = feishu_sync.fetch_schedule()
+    if live is not None:
+        live['feishu'] = info
+        return live
+    d={'events':[{'start':'09:30','end':'10:10','title':'Paper revision','project':'Climate Penalty','hard':True}], 'tasks':[], 'suggested':[]}
+    x,src=adapter(SCHEDULE_FILE,d);x=x if isinstance(x,dict) else d
+    x.setdefault('events',[]);x.setdefault('tasks',[]);x.setdefault('suggested',[])
+    x['source']=src; x['feishu']=info
+    return x
 def recent_events(minutes=60):
     cut=datetime.now(timezone.utc)-timedelta(minutes=minutes);return[(dt(e.get('ts')),e) for e in legacy.read_events(5000) if dt(e.get('ts')) and dt(e.get('ts'))>=cut]
 def flow():
@@ -155,6 +175,20 @@ def ops():
 def normalize(e):
     k=e.get('type') or 'event';typ,text,intensity=('tool_call',e.get('tool') or 'tool',.82) if k=='tool_start' else ('tool_result',e.get('tool') or 'tool',.58) if k=='tool_end' else ('completion',e.get('reason') or 'session stop',.66) if k=='stop' else (k,k,.5);s=e.get('session_id') or '';return{'type':typ,'source_type':k,'session_id':s,'agent':'CLAUDE-'+s[:8] if s else 'CLAUDE','project':e.get('project_name') or 'SYSTEM','text':text,'intensity':intensity,'ts':e.get('ts') or iso(datetime.now(timezone.utc))}
 class Handler(legacy.Handler):
+    def _oauth_page(self, ok, msg):
+        import html as _html
+        safe = _html.escape(str(msg))
+        body = ('<!doctype html><meta charset="utf-8"><title>Apocalypse Feishu</title>'
+                '<body style="margin:0;display:grid;place-items:center;height:100vh;background:#10151c;color:#e6e2da;font-family:Segoe UI,sans-serif">'
+                '<div style="text-align:center"><div style="font-size:22px;font-weight:600">' + ('FEISHU AUTHORIZED' if ok else 'FEISHU AUTH FAILED') +
+                '</div><p style="color:#747a80">' + safe + '</p></div>'
+                '<script>setTimeout(function(){window.close()},1500)</script>').encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def static(self,p,ctype):
         if not p.exists():return self.send_json({'error':'not found'},404)
         b=p.read_bytes();self.send_response(200);self.send_header('Content-Type',ctype);self.send_header('Cache-Control','no-cache');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
@@ -170,6 +204,11 @@ class Handler(legacy.Handler):
         if p=='/api/activity/day':return self.send_json(day_payload((parse_qs(u.query).get('date') or [datetime.now(timezone.utc).date().isoformat()])[0]))
         if p=='/api/quotas':return self.send_json(quotas())
         if p=='/api/schedule':return self.send_json(schedule())
+        if p=='/api/feishu/status':return self.send_json(feishu_sync.status())
+        if p=='/api/feishu/oauth/start':
+            state=feishu_sync.oauth_state();return self.send_json({'ok':True,'url':feishu_sync.authorize_url(state)})
+        if p.startswith('/api/feishu/oauth/callback'):
+            q=parse_qs(u.query);ok,msg=feishu_sync.complete_oauth((q.get('code') or [''])[0],(q.get('state') or [''])[0]);return self._oauth_page(ok,msg)
         if p=='/api/agents':return self.send_json(agents())
         if p=='/api/flow':return self.send_json(flow())
         if p=='/events/spatial':
@@ -190,6 +229,28 @@ class Handler(legacy.Handler):
                     if q in legacy._sse_clients:legacy._sse_clients.remove(q)
             return
         return super().do_GET()
+    def do_POST(self):
+        p=urlparse(self.path).path
+        if p=='/api/feishu/oauth/logout':
+            feishu_sync.clear_oauth();return self.send_json({'ok':True,'authorized':False})
+        if p=='/api/feishu/sync':
+            live,info=feishu_sync.fetch_schedule()
+            return self.send_json({'ok':live is not None,'schedule':live,'feishu':info}, 200 if live is not None else 502)
+        if p in ('/api/feishu/event','/api/feishu/task'):
+            try:
+                length=int(self.headers.get('Content-Length') or 0)
+                body=json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+                if not body.get('summary'): return self.send_json({'ok':False,'error':'summary is required'},400)
+                if p.endswith('/event'):
+                    result=feishu_sync.create_event(body['summary'],body.get('start_ts'),body.get('end_ts'),body.get('description',''))
+                else:
+                    result=feishu_sync.create_task(body['summary'],body.get('due_ts'),body.get('description',''))
+                return self.send_json({'ok':True,'item':result})
+            except (ValueError, TypeError) as exc:
+                return self.send_json({'ok':False,'error':str(exc)},400)
+            except feishu_sync.FeishuError as exc:
+                return self.send_json({'ok':False,'error':str(exc),'code':exc.code},502)
+        return super().do_POST()
 if __name__=='__main__':
     legacy.DATA_DIR.mkdir(parents=True,exist_ok=True);legacy.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=legacy.DATA_DIR/'server.pid';pid.write_text(str(os.getpid()));threading.Thread(target=legacy.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),Handler);print(f'Apocalypse Spatial OS running at http://localhost:{PORT}',flush=True)
     try:srv.serve_forever()

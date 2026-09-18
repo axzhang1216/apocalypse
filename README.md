@@ -16,6 +16,25 @@ Apocalypse now has one UI: **Spatial OS**.
 
 The old dashboard, Three.js nebula workspace and `apocalypse.py` TUI are no longer part of the product.
 
+## Feishu agenda sync
+
+If `~/.claude/apocalypse/secrets.json` contains `feishu_app_id` and
+`feishu_app_secret` (or `FEISHU_APP_ID` / `FEISHU_APP_SECRET` are set), OPS
+can sync Feishu calendars and tasks into AGENDA.
+
+Personal calendar/task data requires **user OAuth**. Click `FEISHU LOGIN`
+(or `SYNC` when unauthorized) and complete the Feishu consent page. Register
+the redirect URI `http://localhost:7749/api/feishu/oauth/callback` in the
+Feishu app security settings, and authorize user scopes such as
+`calendar:calendar:read` / `calendar:calendar` and `task:task:read`.
+
+After authorization, Apocalypse reads events from all calendars available to
+the user (not only the primary calendar) and open Task v2 tasks. Opening a
+day in ACTIVITY also merges that day's Feishu events into the day log.
+Tokens are stored locally in `secrets.json` and refresh automatically.
+Server-side write endpoints remain available at `POST /api/feishu/event` and
+`POST /api/feishu/task`.
+
 ## First launch
 
 The first run stays inside the main window.
