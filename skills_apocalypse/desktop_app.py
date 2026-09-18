@@ -16,11 +16,37 @@ if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 
 import app_lifecycle
+import chat_archive
 import server as core
 import spatial_server_plus as spatial
 
 URL = f"http://localhost:{spatial.PORT}"
 HEALTH_URL = URL + "/api/settings/status"
+
+
+class DesktopApi:
+    """Native-only helpers exposed to the local Spatial OS webview."""
+
+    def __init__(self) -> None:
+        self.window = None
+
+    def select_storage_folder(self, initial: str = ""):
+        try:
+            if self.window is None:
+                return {"ok": False, "error": "desktop window is not ready"}
+            enum = getattr(webview, "FileDialog", None)
+            dialog_type = enum.FOLDER if enum is not None else getattr(webview, "FOLDER_DIALOG")
+            result = self.window.create_file_dialog(
+                dialog_type,
+                directory=initial or str(Path.home()),
+                allow_multiple=False,
+            )
+            if not result:
+                return {"ok": False, "cancelled": True}
+            selected = result[0] if isinstance(result, (tuple, list)) else result
+            return {"ok": True, "path": str(selected)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
 
 def _alive(timeout: float = 0.7) -> bool:
@@ -113,9 +139,13 @@ def main() -> int:
         webview.start(debug=False)
         return 1
 
+    chat_archive.start_background_sync()
+
+    api = DesktopApi()
     window = webview.create_window(
         "Apocalypse",
         URL,
+        js_api=api,
         width=1600,
         height=1000,
         min_size=(1100, 700),
@@ -123,6 +153,8 @@ def main() -> int:
         resizable=True,
         text_select=True,
     )
+
+    api.window = window
 
     def after(win) -> None:
         try:
