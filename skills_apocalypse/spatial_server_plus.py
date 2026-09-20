@@ -39,6 +39,30 @@ def _pid_alive(pid):
  except Exception:return False
 
 
+def _pick_storage_folder(initial=""):
+ """Native folder picker for browser mode (fallback when pywebview API is absent)."""
+ initial = str(initial or "").strip() or str(Path.home())
+ try:
+  import tkinter as tk
+  from tkinter import filedialog
+ except Exception as exc:
+  raise RuntimeError(f"folder picker unavailable: {exc}") from exc
+ root = tk.Tk()
+ root.withdraw()
+ try:
+  try:
+   root.attributes("-topmost", True)
+  except Exception:
+   pass
+  selected = filedialog.askdirectory(initialdir=initial if Path(initial).exists() else str(Path.home()), mustexist=True, title="Choose Apocalypse archive folder")
+ finally:
+  with contextlib.suppress(Exception):
+   root.destroy()
+ if not selected:
+  return {"ok": False, "cancelled": True}
+ return {"ok": True, "path": str(selected)}
+
+
 def _live_claude_process(session_id):
  d=Path.home()/".claude"/"sessions"
  if not d.exists():return None
@@ -219,6 +243,10 @@ class Handler(spatial.Handler):
   if path=="/api/quotas/volc/diagnose":
    try:return self.send_json({"ok":True,**volc_quota.diagnose_volc_agent()})
    except Exception as e:return self.send_json({"ok":False,"error":f"Volc diagnostic failed: {type(e).__name__}"},500)
+  if path=="/api/storage/browse":
+   try:
+    body=_read_json_body(self);return self.send_json(_pick_storage_folder(str(body.get("initial") or "")))
+   except Exception as e:return self.send_json({"ok":False,"error":f"Folder picker failed: {e}"},500)
   if path=="/api/storage/config":
    try:
     body=_read_json_body(self);return self.send_json({"ok":True,**chat_archive.set_root(str(body.get("root") or ""))})

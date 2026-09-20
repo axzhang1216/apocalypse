@@ -310,14 +310,23 @@
 
   browseBtn.addEventListener('click',async function(e){
     e.preventDefault();e.stopPropagation();
+    browseBtn.disabled=true;browseBtn.textContent='OPENING…';
     try{
+      const initial=pathInput.value||(current&&current.root)||'';
+      let j=null;
       const api=window.pywebview&&window.pywebview.api;
       const picker=api&&api.select_storage_folder;
-      if(!picker){pathInput.focus();metaEl.textContent='ENTER A LOCAL PATH, THEN SAVE';return}
-      browseBtn.disabled=true;browseBtn.textContent='OPENING…';
-      const j=await picker(pathInput.value||(current&&current.root)||'');
+      if(picker){
+        j=await picker(initial);
+      }else{
+        const r=await fetch('/api/storage/browse',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({initial:initial})});
+        j=await r.json();
+        if(!r.ok||j.ok===false)throw new Error(j.error||('HTTP '+r.status));
+      }
       if(j&&j.ok&&j.path){pathInput.value=j.path;await save()}
+      else if(j&&j.cancelled){metaEl.textContent='FOLDER PICKER CANCELLED';metaEl.classList.remove('err')}
       else if(j&&j.error){throw new Error(j.error)}
+      else{metaEl.textContent='NO FOLDER SELECTED';metaEl.classList.add('err')}
     }catch(err){metaEl.textContent='FOLDER PICKER FAILED · '+err.message;metaEl.classList.add('err')}
     finally{browseBtn.disabled=false;browseBtn.textContent='BROWSE'}
   });
