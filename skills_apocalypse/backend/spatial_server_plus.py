@@ -20,9 +20,10 @@ import workspace_init
 
 PORT=spatial.PORT;http=spatial.http;core=spatial.legacy
 ANALYSIS_FILE=core.DATA_DIR/"ops_analysis.json"
-ONBOARDING_JS=Path(__file__).resolve().parent/"onboarding_ui.js"
-OPS_POLISH_CSS=Path(__file__).resolve().parent/"ops_polish.css"
-OPS_POLISH_JS=Path(__file__).resolve().parent/"ops_polish.js"
+_FRONT=spatial.asset_dir()
+ONBOARDING_JS=_FRONT/"onboarding_ui.js"
+OPS_POLISH_CSS=_FRONT/"ops_polish.css"
+OPS_POLISH_JS=_FRONT/"ops_polish.js"
 # Grok's auth.json can contain multiple issuers. Use the dedicated adapter that
 # follows Orca's issuer-selection/GROK_HOME semantics rather than the older
 # first-entry implementation kept in quota_adapters for compatibility.

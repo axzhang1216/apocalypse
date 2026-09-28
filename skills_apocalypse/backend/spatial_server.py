@@ -14,7 +14,12 @@ from urllib.parse import parse_qs,urlparse
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import server as legacy
 import feishu_sync
-PORT=legacy.PORT;BASE=Path(__file__).resolve().parent
+PORT=legacy.PORT
+def asset_dir():
+    if getattr(sys,"frozen",False):
+        return Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
+    return Path(__file__).resolve().parent.parent/"frontend"
+BASE=asset_dir()
 SPATIAL_HTML=BASE/'spatial_os.html';SPATIAL_CSS=BASE/'spatial_os.css';SPATIAL_JS=BASE/'spatial_os.js'
 QUOTA_FILE=legacy.DATA_DIR/'quotas.json';SCHEDULE_FILE=legacy.DATA_DIR/'schedule.json'
 DIMS=('science','ai','modeling','agent','infra','design','data','writing')

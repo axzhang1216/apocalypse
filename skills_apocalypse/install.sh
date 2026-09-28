@@ -10,19 +10,11 @@ esac
 if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
 
 echo "Installing Apocalypse Spatial OS → $DEST"
-mkdir -p "$DEST/hooks" "$HOME/bin"
+mkdir -p "$DEST/hooks" "$DEST/backend" "$DEST/frontend" "$HOME/bin"
 
-FILES=(
-  server.py spatial_server.py spatial_server_plus.py repair.py
-  spatial_os.html spatial_os.css spatial_os.js onboarding_ui.js
-  ops_polish.css ops_polish.js
-  apocalypse_ui.py apocalypse-ui apocalypse-ui.cmd
-  workspace_init.py platform_utils.py
-  agent_discovery.py onboarding.py analysis_harness.py anthropic.py
-  quota_adapters.py grok_quota.py volc_quota.py ops_analysis.py app_lifecycle.py
-  feishu_sync.py chat_archive.py
-)
-for f in "${FILES[@]}"; do cp "$SRC/$f" "$DEST/$f"; done
+cp "$SRC"/backend/*.py "$DEST/backend/"
+cp "$SRC"/frontend/* "$DEST/frontend/"
+cp "$SRC/apocalypse-ui" "$SRC/apocalypse-ui.cmd" "$DEST/"
 cp "$SRC/hooks/on-tool.sh" "$DEST/hooks/on-tool.sh"
 cp "$SRC/hooks/on-stop.sh" "$DEST/hooks/on-stop.sh"
 chmod +x "$DEST/apocalypse-ui" "$DEST/hooks/on-tool.sh" "$DEST/hooks/on-stop.sh"

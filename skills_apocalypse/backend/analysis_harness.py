@@ -7,6 +7,14 @@ from pathlib import Path
 DATA_DIR=Path.home()/".claude"/"apocalypse";CONFIG_FILE=DATA_DIR/"harness.json"
 class HarnessError(RuntimeError):pass
 
+OUTPUT_LANGUAGE_ENV="APOCALYPSE_OUTPUT_LANGUAGE";DEFAULT_OUTPUT_LANGUAGE="简体中文"
+def output_language():return (os.environ.get(OUTPUT_LANGUAGE_ENV) or DEFAULT_OUTPUT_LANGUAGE).strip()
+def _language_directive():
+ lang=output_language()
+ if not lang:return ""
+ return (f"Unless the user's message is clearly in another language or the task "
+         f"explicitly requires a specific language, write your entire response in {lang}.")
+
 def load_config():
  try:cfg=json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
  except FileNotFoundError as e:raise HarnessError("Apocalypse analysis model is not configured. Run: apocalypse-ui init") from e
@@ -124,6 +132,8 @@ def _hermes(c,prompt,system,timeout):
 def complete(prompt,*,max_tokens=1024,system=None,timeout=120.0,model_override=None):
  c=model_config()
  if model_override:c["model"]=model_override
+ lang=_language_directive()
+ if lang:system=(system+"\n\n"+lang) if system else lang
  t=str(c.get("transport") or "")
  if t=="anthropic_messages":return _anthropic(c,prompt,max_tokens,system,timeout)
  if t=="openai_responses":return _responses(c,prompt,max_tokens,system,timeout)

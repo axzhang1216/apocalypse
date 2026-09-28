@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version, e.g. v0.3.9'
+        description: 'Release version, e.g. v0.4.0'
         required: true
-        default: 'v0.3.9'
+        default: 'v0.4.0'
 
 permissions:
   contents: write
 
 env:
-  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.3.9') }}
+  VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || (github.ref_type == 'tag' && github.ref_name || 'v0.4.0') }}
 
 jobs:
   build:
@@ -54,7 +54,7 @@ jobs:
       - name: Stamp packaged app version
         shell: pwsh
         run: |
-          $path = 'skills_apocalypse/app_lifecycle.py'
+          $path = 'skills_apocalypse/backend/app_lifecycle.py'
           $text = Get-Content $path -Raw
           $text = $text -replace 'APP_VERSION\s*=\s*"[^"]+"', "APP_VERSION = `"$env:APP_VERSION`""
           Set-Content -Path $path -Value $text -Encoding UTF8
@@ -84,13 +84,14 @@ jobs:
             --hidden-import volc_quota `
             --hidden-import grok_quota `
             --hidden-import feishu_sync `
-            --add-data "skills_apocalypse/spatial_os.html;." `
-            --add-data "skills_apocalypse/spatial_os.css;." `
-            --add-data "skills_apocalypse/spatial_os.js;." `
-            --add-data "skills_apocalypse/onboarding_ui.js;." `
-            --add-data "skills_apocalypse/ops_polish.css;." `
-            --add-data "skills_apocalypse/ops_polish.js;." `
-            skills_apocalypse/desktop_app.py
+            --paths skills_apocalypse/backend `
+            --add-data "skills_apocalypse/frontend/spatial_os.html;." `
+            --add-data "skills_apocalypse/frontend/spatial_os.css;." `
+            --add-data "skills_apocalypse/frontend/spatial_os.js;." `
+            --add-data "skills_apocalypse/frontend/onboarding_ui.js;." `
+            --add-data "skills_apocalypse/frontend/ops_polish.css;." `
+            --add-data "skills_apocalypse/frontend/ops_polish.js;." `
+            skills_apocalypse/backend/desktop_app.py
       - name: Verify executable architecture
         shell: pwsh
         env:
@@ -197,13 +198,11 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - add Feishu user OAuth agenda sync and Activity day-log merge
-          - add official Volcengine Agent Plan 5h + weekly quota through existing Ark CLI login
-          - add Settings → Storage with native folder selection and Sync Now
-          - automatically archive local Claude, Codex, Pi, Hermes, OpenClaw, and Grok chat histories in the background
-          - preserve native transcripts where possible and export only conversation tables from SQLite-backed agents
-          - avoid copying auth/token/config stores into the archive
-          - background verified updater retained
+          - split the product into frontend, backend, and the knowledge pipeline
+          - add chat cleaning, conversation segmentation, and Knowledge IR scripts
+          - analysis output defaults to Simplified Chinese; override with APOCALYPSE_OUTPUT_LANGUAGE
+          - desktop and source installs load Spatial OS from the new layout
+          - keep local run data, archives, and vendor files out of the repository
           - x64 and native x86 installers
 
           Installations under Program Files may still require a Windows UAC approval when a staged update is applied.

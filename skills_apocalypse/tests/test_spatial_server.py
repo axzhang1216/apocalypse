@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-SKILL_DIR = Path(__file__).resolve().parents[1]
-if str(SKILL_DIR) not in sys.path:
-    sys.path.insert(0, str(SKILL_DIR))
+BACKEND = Path(__file__).resolve().parents[1] / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 import spatial_server
 

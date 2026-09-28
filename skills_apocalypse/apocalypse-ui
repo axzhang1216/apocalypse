@@ -3,4 +3,4 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PY=python
 if command -v python3 >/dev/null 2>&1 && python3 -c "" >/dev/null 2>&1; then PY=python3; fi
-exec "$PY" "$SCRIPT_DIR/apocalypse_ui.py" "$@"
+exec "$PY" "$SCRIPT_DIR/backend/apocalypse_ui.py" "$@"

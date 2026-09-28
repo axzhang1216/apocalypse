@@ -6,3 +6,6 @@ runtime_apocalypse/
 __pycache__/
 skills_apocalypse/__pycache__/
 *.pyc
+skills_apocalypse/data/
+archive/
+vendor/

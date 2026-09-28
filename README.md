@@ -2,6 +2,8 @@
 
 **Your agents. One memory.**
 
+Agents working in this repo should read [AGENTS.md](AGENTS.md) before changing layout, data, or local configuration.
+
 Apocalypse is a local workspace for understanding and operating AI-agent work across projects. It combines a spatial project memory, live/recent sessions, activity history, Plan usage, agenda context, and an Apocalypse-owned analysis harness in one interface.
 
 ## Current product
@@ -124,22 +126,14 @@ apocalypse-ui analyze   # refresh cached agenda/worklog analysis
 
 ```text
 skills_apocalypse/
-├── spatial_os.html / .css / .js
-├── onboarding_ui.js
-├── spatial_server.py
-├── spatial_server_plus.py
-├── server.py                  # transcript/session API core
-├── agent_discovery.py
-├── onboarding.py
-├── analysis_harness.py
-├── workspace_init.py
-├── quota_adapters.py
-├── ops_analysis.py
-├── app_lifecycle.py
-├── desktop_app.py
-├── apocalypse_ui.py
+├── frontend/          # Spatial OS html / css / js
+├── backend/           # server, Spatial OS runtime, quotas, harness
+├── pipeline/          # clean → segment → knowledge IR (latest scripts only)
+├── data/              # cleaned sessions, conversations, knowledge IR, chat logs
 ├── hooks/
-└── tests/
+├── tests/
+├── apocalypse-ui      # launcher
+└── install.sh
 ```
 
 Claude hooks are optional realtime enrichment. Apocalypse itself is designed to remain agent-independent.
