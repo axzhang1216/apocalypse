@@ -19,7 +19,23 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 BASE = "https://open.feishu.cn/open-apis"
-TZ = ZoneInfo(os.getenv("APOCALYPSE_TIMEZONE", "Asia/Shanghai"))
+
+
+def _load_tz():
+    """Resolve the local time zone without ever crashing the whole app.
+
+    zoneinfo needs the tzdata database on Windows; when it is missing the
+    import-time lookup throws ZoneInfoNotFoundError.  Fall back to UTC rather
+    than taking down the desktop app over an optional Feishu feature.
+    """
+    name = os.getenv("APOCALYPSE_TIMEZONE", "Asia/Shanghai")
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return timezone.utc
+
+
+TZ = _load_tz()
 SECRETS = Path.home() / ".claude" / "apocalypse" / "secrets.json"
 REDIRECT_URI = os.getenv("FEISHU_REDIRECT_URI") or "http://localhost:7749/api/feishu/oauth/callback"
 AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
