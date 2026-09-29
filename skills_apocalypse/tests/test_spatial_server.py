@@ -10,6 +10,8 @@ if str(BACKEND) not in sys.path:
 
 import spatial_server
 
+import feishu_sync
+
 
 WORKSPACE = {
     "last_full_init": "2026-09-04T00:00:00Z",
@@ -128,5 +130,64 @@ class SpatialWorldTests(unittest.TestCase):
         self.assertEqual(providers, {"claude", "codex", "pi", "openclaw", "hermes"})
 
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_schedule_uses_local_status_and_cached_snapshot_without_network(self):
+        # After a successful sync, opening the app renders the cached snapshot
+        # plus local status; feishu_sync.fetch_schedule (the network path) is
+        # never called.
+        cached = {"events": [{"start": "10:00", "end": "11:00", "title": "Sync", "project": "FEISHU CALENDAR"}],
+                  "tasks": [], "suggested": [], "source": "feishu"}
+        with mock.patch.object(spatial_server.feishu_sync, "status", return_value={
+                "configured": True, "authorized": True, "connected": True,
+                "last_sync_at": "2026-09-04T10:00:00Z", "last_error": None,
+                "message": "FEISHU LIVE"}), \
+             mock.patch.object(spatial_server.feishu_sync, "cached_schedule", return_value=cached), \
+             mock.patch.object(spatial_server.feishu_sync, "fetch_schedule") as fetch:
+            payload = spatial_server.schedule()
+        self.assertIsNone(fetch.call_args)
+        self.assertEqual(payload["source"], "feishu")
+        self.assertEqual(payload["events"][0]["title"], "Sync")
+        self.assertTrue(payload["feishu"]["connected"])
+
+    def test_schedule_surfaces_feishu_failure_locally(self):
+        # When the last sync failed there is no cached snapshot, but the local
+        # status must carry the failure so the UI can show it in the agenda.
+        with mock.patch.object(spatial_server.feishu_sync, "status", return_value={
+                "configured": True, "authorized": True, "connected": False,
+                "last_sync_at": "2026-09-04T10:00:00Z",
+                "last_error": "FEISHU API ERROR · nope", "code": 99991672,
+                "message": "FEISHU API ERROR · nope"}), \
+             mock.patch.object(spatial_server.feishu_sync, "cached_schedule", return_value=None):
+            payload = spatial_server.schedule()
+        self.assertFalse(payload["feishu"]["connected"])
+        self.assertIn("nope", payload["feishu"]["last_error"])
+        self.assertEqual(payload["source"], "demo")  # local file fallback
+
+    def test_sync_now_persists_successful_snapshot(self):
+        sched = {"events": [], "tasks": [], "suggested": [], "source": "feishu", "calendar_id": "cal"}
+        info = {"configured": True, "authorized": True, "connected": True, "message": "FEISHU LIVE"}
+        with mock.patch.object(feishu_sync, "fetch_schedule", return_value=(sched, info)), \
+             mock.patch.object(feishu_sync, "_load_state", return_value={}), \
+             mock.patch.object(feishu_sync, "_save_state") as save:
+            live, out = feishu_sync.sync_now()
+        self.assertEqual(live["source"], "feishu")
+        self.assertTrue(out["connected"])
+        saved = save.call_args[0][0]
+        self.assertTrue(saved["ok"])
+        self.assertEqual(saved["schedule"]["calendar_id"], "cal")
+        self.assertIsNone(saved["last_error"])
+
+    def test_sync_now_persists_failure(self):
+        info = {"configured": True, "authorized": True, "connected": False,
+                "message": "FEISHU API ERROR · boom", "code": 99991672}
+        with mock.patch.object(feishu_sync, "fetch_schedule", return_value=(None, info)), \
+             mock.patch.object(feishu_sync, "_load_state", return_value={}), \
+             mock.patch.object(feishu_sync, "_save_state") as save:
+            live, out = feishu_sync.sync_now()
+        self.assertIsNone(live)
+        self.assertFalse(out["connected"])
+        saved = save.call_args[0][0]
+        self.assertFalse(saved["ok"])
+        self.assertIn("boom", saved["last_error"])
+        self.assertEqual(saved["code"], 99991672)
+
+

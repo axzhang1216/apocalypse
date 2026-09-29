@@ -140,10 +140,20 @@ def quotas():
     for r in rows:r.setdefault('source',src)
     return rows
 def schedule():
-    live, info = feishu_sync.fetch_schedule()
-    if live is not None:
-        live['feishu'] = info
-        return live
+    # Local-only: opening the app never calls the Feishu API. Render the last
+    # cached snapshot when it exists, otherwise the local schedule file, and
+    # attach the local sync status (including any last failure).
+    try:
+        info = feishu_sync.status()
+        cached = feishu_sync.cached_schedule()
+    except Exception:
+        info = {"configured": False, "authorized": False, "connected": False,
+                "last_sync_at": None, "last_error": None, "message": "FEISHU UNAVAILABLE"}
+        cached = None
+    if cached:
+        cached['source'] = 'feishu'
+        cached['feishu'] = info
+        return cached
     d={'events':[{'start':'09:30','end':'10:10','title':'Paper revision','project':'Climate Penalty','hard':True}], 'tasks':[], 'suggested':[]}
     x,src=adapter(SCHEDULE_FILE,d);x=x if isinstance(x,dict) else d
     x.setdefault('events',[]);x.setdefault('tasks',[]);x.setdefault('suggested',[])
@@ -239,7 +249,10 @@ class Handler(legacy.Handler):
         if p=='/api/feishu/oauth/logout':
             feishu_sync.clear_oauth();return self.send_json({'ok':True,'authorized':False})
         if p=='/api/feishu/sync':
-            live,info=feishu_sync.fetch_schedule()
+            try:
+                live,info=feishu_sync.sync_now()
+            except Exception as exc:
+                return self.send_json({'ok':False,'error':str(exc),'feishu':{'configured':feishu_sync.configured(),'connected':False,'message':f'FEISHU SYNC ERROR · {exc}'}},502)
             return self.send_json({'ok':live is not None,'schedule':live,'feishu':info}, 200 if live is not None else 502)
         if p in ('/api/feishu/event','/api/feishu/task'):
             try:

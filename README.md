@@ -20,6 +20,10 @@ The old dashboard, Three.js nebula workspace and `apocalypse.py` TUI are no long
 
 ## Feishu agenda sync
 
+Feishu sync is **optional and manual** — Apocalypse never contacts the
+Feishu API at startup. AGENDA renders the last synced snapshot (or a local
+placeholder) and the ↻ SYNC button runs the network sync on demand.
+
 If `~/.claude/apocalypse/secrets.json` contains `feishu_app_id` and
 `feishu_app_secret` (or `FEISHU_APP_ID` / `FEISHU_APP_SECRET` are set), OPS
 can sync Feishu calendars and tasks into AGENDA.
@@ -30,12 +34,17 @@ the redirect URI `http://localhost:7749/api/feishu/oauth/callback` in the
 Feishu app security settings, and authorize user scopes such as
 `calendar:calendar:read` / `calendar:calendar` and `task:task:read`.
 
-After authorization, Apocalypse reads events from all calendars available to
-the user (not only the primary calendar) and open Task v2 tasks. Opening a
-day in ACTIVITY also merges that day's Feishu events into the day log.
-Tokens are stored locally in `secrets.json` and refresh automatically.
-Server-side write endpoints remain available at `POST /api/feishu/event` and
-`POST /api/feishu/task`.
+After authorization, click ↻ SYNC to fetch events from all calendars
+available to the user (not only the primary calendar) and open Task v2
+tasks. The result is cached locally (`~/.claude/apocalypse/feishu_sync_state.json`)
+so AGENDA keeps showing the last-known events. Opening a day in ACTIVITY
+also merges that day's Feishu events into the day log. Tokens are stored
+locally in `secrets.json` and refresh automatically.
+
+A failed sync never blocks the app: it only marks the AGENDA zone with a
+`FEISHU NOT SYNCED` / `FEISHU SYNC FAILED` banner (and the badge shows the
+reason on hover), so you can retry with ↻ SYNC. Server-side write endpoints
+remain available at `POST /api/feishu/event` and `POST /api/feishu/task`.
 
 ## First launch
 

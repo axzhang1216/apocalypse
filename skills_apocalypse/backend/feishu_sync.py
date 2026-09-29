@@ -37,6 +37,8 @@ def _load_tz():
 
 TZ = _load_tz()
 SECRETS = Path.home() / ".claude" / "apocalypse" / "secrets.json"
+# Persisted result of the most recent explicit sync. Never touched at startup.
+STATE_FILE = Path.home() / ".claude" / "apocalypse" / "feishu_sync_state.json"
 REDIRECT_URI = os.getenv("FEISHU_REDIRECT_URI") or "http://localhost:7749/api/feishu/oauth/callback"
 AUTHORIZE_URL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 OAUTH_SCOPES = os.getenv("FEISHU_OAUTH_SCOPES") or "offline_access calendar:calendar:read calendar:calendar task:task:read"
@@ -123,6 +125,37 @@ def _save_secrets(update):
     data = _load_secrets()
     data.update(update)
     SECRETS.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_state():
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state):
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _local_authorized():
+    """Whether an OAuth token that could authenticate a sync exists locally.
+
+    Deliberately does not call _user_token(): refreshing a token is a network
+    call and this must stay local-only so opening the app never touches Feishu.
+    """
+    sec = _load_secrets()
+    if sec.get("feishu_user_access_token"):
+        exp = float(sec.get("feishu_user_expires_at") or 0)
+        if exp and time.time() < exp - 60:
+            return True
+    refresh = sec.get("feishu_user_refresh_token")
+    rexp = float(sec.get("feishu_user_refresh_expires_at") or 0)
+    return bool(refresh and (not rexp or time.time() < rexp))
 
 
 def authorize_url(state):
@@ -253,10 +286,7 @@ def clear_oauth():
 def oauth_status():
     if not configured():
         return {"configured": False, "authorized": False, "message": "FEISHU APP NOT CONFIGURED"}
-    try:
-        authorized = _user_token() is not None
-    except FeishuError:
-        authorized = False
+    authorized = _local_authorized()
     sec = _load_secrets()
     return {"configured": True, "authorized": authorized, "redirect_uri": REDIRECT_URI,
             "user_name": sec.get("feishu_user_name") or "",
@@ -410,9 +440,80 @@ def create_task(summary, due_ts=None, description=""):
 
 
 def status():
+    """Local-only status: never touches the Feishu API.
+
+    Reflected from the last explicit sync (STATE_FILE) plus what OAuth
+    credentials exist locally. connected means the most recent sync succeeded.
+    """
+    st = _load_state()
     if not configured():
-        return {"configured": False, "connected": False, "authorized": False, "message": "FEISHU CREDENTIALS NOT CONFIGURED"}
-    _, info = fetch_schedule()
-    info["redirect_uri"] = REDIRECT_URI
-    info["scope"] = _load_secrets().get("feishu_user_scope") or ""
-    return info
+        return {"configured": False, "authorized": False, "connected": False,
+                "last_sync_at": st.get("last_sync_at"), "last_error": st.get("last_error"),
+                "message": "FEISHU APP NOT CONFIGURED"}
+    base = {
+        "configured": True,
+        "authorized": _local_authorized(),
+        "connected": bool(st.get("ok")),
+        "last_sync_at": st.get("last_sync_at"),
+        "last_error": st.get("last_error"),
+        "code": st.get("code"),
+        "task_error_code": st.get("task_error_code"),
+        "tasks_connected": st.get("tasks_connected"),
+        "redirect_uri": REDIRECT_URI,
+        "scope": _load_secrets().get("feishu_user_scope") or "",
+    }
+    if st.get("message"):
+        base["message"] = st["message"]
+    elif base["authorized"]:
+        base["message"] = "FEISHU NOT SYNCED YET · CLICK ↻ SYNC"
+    else:
+        base["message"] = "FEISHU USER AUTH REQUIRED"
+    return base
+
+
+def cached_schedule():
+    """Return the schedule snapshot from the last successful sync, if any.
+
+    Local-only: opening the app renders the cached agenda without contacting
+    Feishu. A failed sync keeps the previous snapshot so the UI can still show
+    last-known events alongside the error banner.
+    """
+    st = _load_state()
+    if isinstance(st.get("schedule"), dict) and st.get("schedule").get("events") is not None:
+        return json.loads(json.dumps(st["schedule"]))
+    return None
+
+
+def sync_now():
+    """Run one explicit Feishu sync (network) and persist its outcome.
+
+    Only called from the ↻ SYNC button; never from startup. On success the
+    schedule snapshot is cached for offline rendering; on failure the error
+    is persisted so the UI can show why the last sync failed.
+    """
+    try:
+        live, info = fetch_schedule()
+    except Exception as exc:  # never let a sync failure escape
+        live, info = None, {"configured": configured(), "authorized": _local_authorized(),
+                            "connected": False, "message": f"FEISHU SYNC ERROR · {exc}"}
+    st = _load_state()
+    st["last_sync_at"] = datetime.now(timezone.utc).isoformat()
+    if live is not None:
+        st["ok"] = True
+        st["schedule"] = live
+        st["last_error"] = None
+        st["message"] = info.get("message") or "FEISHU SYNCED"
+        st["code"] = None
+    else:
+        st["ok"] = False
+        st["last_error"] = info.get("message") or "FEISHU SYNC FAILED"
+        st["message"] = st["last_error"]
+        st["code"] = info.get("code")
+    st["task_error_code"] = info.get("task_error_code")
+    st["tasks_connected"] = info.get("tasks_connected")
+    _save_state(st)
+    merged = dict(info)
+    merged["last_sync_at"] = st["last_sync_at"]
+    merged["last_error"] = st["last_error"]
+    merged["connected"] = live is not None
+    return live, merged
