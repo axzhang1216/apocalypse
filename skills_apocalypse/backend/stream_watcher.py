@@ -60,6 +60,7 @@ THRESHOLD = 0.5
 TAIL_SCAN_BYTES = 256 * 1024      # first-sight catch-up window for adopted sessions
 FRESH_CONVERSATION_SECONDS = 2 * 3600   # conversations written within this are "active"
 FRESH_FILE_SECONDS = 3600        # raw file mtime within this = brand-new session
+READ_CHUNK_CAP = 4 * 1024 * 1024      # max raw bytes processed per file per poll
 HERMES_LOOKBACK_ROWS = 200       # first-sight sqlite catch-up window
 
 # pipeline/ lives beside backend/ in both repo and installed layouts.
@@ -511,10 +512,14 @@ def _make_title(text: str) -> str:
         title = analysis_harness.complete(
             f"用{_TITLE_LANG}为下面这条用户消息代表的对话主题起一个不超过16字的简短标题，"
             f"只输出标题本身：\n{text[:1500]}",
-            max_tokens=48, timeout=30,
-        ).strip().strip('"“”').splitlines()[0]
-        if title:
-            return title[:32]
+            max_tokens=512, timeout=30,
+        )
+        title = re.sub(r"<think>.*?</think>", "", title, flags=re.S)
+        title = re.sub(r"<mm:think>.*?</mm:think>", "", title, flags=re.S)
+        if "<think>" not in title and "<mm:think>" not in title:   # unclosed reasoning = no title
+            title = title.strip().strip('"“”').splitlines()[0]
+            if title:
+                return title[:32]
     except Exception:
         pass
     t = re.sub(r"\s+", " ", text or "").strip()
@@ -816,6 +821,27 @@ def _ts_covered(ts, watermark) -> bool:
     return bool(dt and wm and dt <= wm)
 
 
+def _session_started_recently(path: Path) -> bool:
+    """True if the session's first record is recent — a genuinely new session,
+    not an old one that merely happens to still be active (mtime is fresh for
+    both; only the first record's timestamp separates them)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(65536)
+        i = head.find(b"\n")
+        line = head[:i] if i >= 0 else head
+        d = json.loads(line.decode("utf-8", "replace"))
+    except Exception:
+        return True                      # can't tell: keep the mtime-based rule
+    ts = d.get("timestamp") if isinstance(d, dict) else None
+    if not ts:
+        return True
+    dt = _parse_ts(ts)
+    if dt is None:
+        return True
+    return time.time() - dt.timestamp() <= FRESH_FILE_SECONDS
+
+
 def _first_sight_cursor(agent: str, path: Path, size: int, mtime: float) -> tuple[dict, object]:
     """Cursor decision for a raw file the watcher has never seen before.
     Returns (cursor, watermark) where watermark is an ISO string or None."""
@@ -832,7 +858,7 @@ def _first_sight_cursor(agent: str, path: Path, size: int, mtime: float) -> tupl
             wm = _session_watermark(sess)
             return {"offset": max(0, size - TAIL_SCAN_BYTES)}, (wm.isoformat() if wm else None)
         return {"offset": size}, None
-    if time.time() - mtime <= FRESH_FILE_SECONDS:
+    if time.time() - mtime <= FRESH_FILE_SECONDS and _session_started_recently(path):
         return {"offset": 0}, None       # brand-new session: process from the start
     return {"offset": size}, None        # history: the batch pipeline's job
 
@@ -860,7 +886,7 @@ def _read_new_lines(agent: str, path: Path, cur: dict | None):
         return [], cur, watermark
     with open(path, "rb") as f:
         f.seek(offset)
-        chunk = f.read(size - offset)
+        chunk = f.read(min(size - offset, READ_CHUNK_CAP))
     last_nl = chunk.rfind(b"\n")
     if last_nl < 0:                      # partial trailing line: wait for more
         cur = {"offset": offset, "size": size}

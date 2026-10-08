@@ -101,7 +101,7 @@ Workspace/session analysis, discussion-decision extraction, compact conversation
 - Conversations are stored under `~/.claude/apocalypse/conversations/` as one JSONL per session, in the same record format the batch pipeline produces.
 - OPS lists conversations — click one to see the user questions and the assistant conclusion replies; the star map shows the most recent conversations under each project.
 
-History on first start: sessions already covered by the batch pipeline are adopted from its output (`skills_apocalypse/data/conversations_output` when running from the repo, or the directory in `APOCALYPSE_BATCH_CONVERSATIONS_DIR`). Adopted files are copied into the live directory, which is then authoritative; delete a live file to re-adopt from the batch output.
+History on first start: sessions already covered by the batch pipeline are adopted from its output (`skills_apocalypse/data/conversations_output` when running from the repo, or the directory in `APOCALYPSE_BATCH_CONVERSATIONS_DIR`). Adopted files are copied into the live directory, which is then authoritative; delete a live file to re-adopt from the batch output. A session the watcher has never seen is history unless it actually started within the last hour (the first record's timestamp, not just a fresh file mtime). A weeks-old session that is still active is watched from now on; its earlier messages stay the batch pipeline's job.
 
 Environment variables (all optional): `APOCALYPSE_STREAM_POLL_SECONDS` (default 5), `APOCALYPSE_JEV_TIMEOUT` (default 20), `APOCALYPSE_BATCH_CONVERSATIONS_DIR`, `APOCALYPSE_OUTPUT_LANGUAGE` (conversation titles default to 简体中文).
 

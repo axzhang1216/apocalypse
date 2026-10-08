@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -18,6 +19,13 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import stream_watcher as sw  # noqa: E402
+
+
+def _ts(minute=0):
+    """Fresh UTC timestamp N minutes from now — fixtures stand in for
+    messages written by an active session."""
+    dt = datetime.now(timezone.utc) + timedelta(minutes=minute)
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 def _claude_user(text, ts, cwd=None):
@@ -103,7 +111,7 @@ class FirstSightRules(WatcherTestCase):
     def test_stale_history_skipped(self):
         """A file that existed before the watcher starts is history (cursor=EOF)."""
         p = self.claude_file()
-        self.append(p, _claude_user("历史消息不该被处理", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("历史消息不该被处理", "2025-06-01T00:00:00Z", cwd="E:/t/proj"))
         old = time.time() - 7200
         os.utime(p, (old, old))
         sw._poll_files()
@@ -113,20 +121,42 @@ class FirstSightRules(WatcherTestCase):
 
     def test_brand_new_file_processed_from_start(self):
         p = self.claude_file()
-        self.append(p, _claude_user("新会话的第一条消息", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        fresh = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self.append(p, _claude_user("新会话的第一条消息", fresh, cwd="E:/t/proj"))
         self.poll()
         self.assertEqual(sw.stats()["conversations"], 1)
         recs = self.live_records("sess-abc")
         self.assertEqual(len(recs[0]["messages"]), 1)
+
+    def test_old_but_active_session_starts_from_now(self):
+        """A session that started long ago but is still active: history is
+        skipped (batch pipeline's job); only new messages are watched."""
+        p = self.claude_file()
+        self.append(p,
+                    _claude_user("三周前的旧消息", "2025-06-01T00:00:00Z", cwd="E:/t/proj"),
+                    _claude_assistant("三周前的旧回复", "2025-06-01T00:01:00Z"))
+        self.poll()
+        # history skipped: cursor at EOF, nothing judged, no conversations
+        cur = sw._state["files"][f"claude|{p}"]
+        self.assertEqual(cur["offset"], p.stat().st_size)
+        self.assertEqual(sw.stats()["conversations"], 0)
+        # a new message appended now opens a conversation with just that message
+        fresh = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self.append(p, _claude_user("今天的新消息", fresh, cwd="E:/t/proj"))
+        self.poll()
+        self.assertEqual(sw.stats()["conversations"], 1)
+        recs = self.live_records("sess-abc")
+        self.assertEqual(len(recs[0]["messages"]), 1)
+        self.assertEqual(recs[0]["messages"][0]["text"], "今天的新消息")
 
     def test_adopted_session_tail_scan_skips_covered(self):
         """Fresh conversations → 256 KB tail scan, but watermark-covered
         messages are skipped; only the new tail is attached."""
         p = self.claude_file()
         self.append(p,
-                    _claude_user("旧消息一", "2026-01-01T00:00:00Z", cwd="E:/t/proj"),
-                    _claude_assistant("旧回复一", "2026-01-01T00:01:00Z"),
-                    _claude_user("新消息二", "2026-01-02T00:00:00Z", cwd="E:/t/proj"))
+                    _claude_user("旧消息一", _ts(0), cwd="E:/t/proj"),
+                    _claude_assistant("旧回复一", _ts(1)),
+                    _claude_user("新消息二", _ts(10), cwd="E:/t/proj"))
         # batch conversations covering the first two messages
         batch = self.roots["APOCALYPSE_BATCH_CONVERSATIONS_DIR"] / "claude_proj_sess-abc.conversations.jsonl"
         batch.write_text(json.dumps({
@@ -134,9 +164,9 @@ class FirstSightRules(WatcherTestCase):
             "title": "旧对话", "start_line_no": 1, "end_line_no": 2,
             "messages": [
                 {"agent": "claude", "session_id": "sess-abc", "project": "unknown",
-                 "role": "user", "text": "旧消息一", "ts": "2026-01-01T00:00:00Z", "line_no": 1},
+                 "role": "user", "text": "旧消息一", "ts": _ts(0), "line_no": 1},
                 {"agent": "claude", "session_id": "sess-abc", "project": "unknown",
-                 "role": "assistant", "text": "旧回复一", "ts": "2026-01-01T00:01:00Z",
+                 "role": "assistant", "text": "旧回复一", "ts": _ts(1),
                  "line_no": 2, "conclusion": True},
             ],
         }, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -165,11 +195,11 @@ class RoutingTests(WatcherTestCase):
     def setUp(self):
         super().setUp()
         self.p = self.claude_file()
-        self.append(self.p, _claude_user("第一条请求", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(self.p, _claude_user("第一条请求", _ts(0), cwd="E:/t/proj"))
 
     def test_new_conversation_then_appends(self):
         self.poll()  # first message → new conversation
-        self.append(self.p, _claude_assistant("这是回复", "2026-01-01T00:01:00Z"))
+        self.append(self.p, _claude_assistant("这是回复", _ts(1)))
         self.poll()
         recs = self.live_records("sess-abc")
         self.assertEqual(len(recs), 1)
@@ -182,8 +212,8 @@ class RoutingTests(WatcherTestCase):
 
     def test_followup_same_topic_assistant_conclusion(self):
         self.append(self.p,
-                    _claude_assistant("回复一", "2026-01-01T00:01:00Z"),
-                    _claude_user("追问一下", "2026-01-01T00:02:00Z", cwd="E:/t/proj"))
+                    _claude_assistant("回复一", _ts(1)),
+                    _claude_user("追问一下", _ts(2), cwd="E:/t/proj"))
         self.poll()  # all three lines in one poll
         msgs = self.live_records("sess-abc")[0]["messages"]
         self.assertEqual(len(msgs), 3)
@@ -195,9 +225,9 @@ class RoutingTests(WatcherTestCase):
         def jev(text, prev, with_topic):
             return {"meaningful": True, "new_topic": text.startswith("换个话题"), "via": "jev"}
         self.poll(judge_side=jev)
-        self.append(self.p, _claude_assistant("回复一", "2026-01-01T00:01:00Z"))
+        self.append(self.p, _claude_assistant("回复一", _ts(1)))
         self.poll(judge_side=jev)
-        self.append(self.p, _claude_user("换个话题：天气如何", "2026-01-01T00:02:00Z", cwd="E:/t/proj"))
+        self.append(self.p, _claude_user("换个话题：天气如何", _ts(2), cwd="E:/t/proj"))
         self.poll(judge_side=jev)
         recs = self.live_records("sess-abc")
         self.assertEqual(len(recs), 2)
@@ -212,9 +242,9 @@ class RoutingTests(WatcherTestCase):
 
     def test_noise_and_ping_skipped_without_jev(self):
         self.append(self.p,
-                    _claude_user("test", "2026-01-01T00:01:00Z", cwd="E:/t/proj"),
-                    _claude_user("<command-message>foo</command-message>", "2026-01-01T00:02:00Z", cwd="E:/t/proj"),
-                    _claude_user("<local-command-stdout>ok</local-command-stdout>", "2026-01-01T00:03:00Z", cwd="E:/t/proj"))
+                    _claude_user("test", _ts(1), cwd="E:/t/proj"),
+                    _claude_user("<command-message>foo</command-message>", _ts(2), cwd="E:/t/proj"),
+                    _claude_user("<local-command-stdout>ok</local-command-stdout>", _ts(3), cwd="E:/t/proj"))
         jm = self.poll()  # first real message judged; noise never reaches jev
         judged = [c.args[0] for c in jm.call_args_list]
         self.assertEqual(judged, ["第一条请求"])
@@ -228,7 +258,7 @@ class RoutingTests(WatcherTestCase):
             calls.append((text, prev))
             return {"meaningful": False, "new_topic": None, "via": "jev"}
         self.poll(judge_side=jev)
-        self.append(self.p, _claude_user("嗯嗯好的收到", "2026-01-01T00:01:00Z", cwd="E:/t/proj"))
+        self.append(self.p, _claude_user("嗯嗯好的收到", _ts(1), cwd="E:/t/proj"))
         self.poll(judge_side=jev)
         # the dropped message still becomes prev_text for the next judgment
         self.assertEqual(calls[1][0], "嗯嗯好的收到")
@@ -236,7 +266,7 @@ class RoutingTests(WatcherTestCase):
         self.assertEqual(sw._sessions["sess-abc"]["prev_text"], "嗯嗯好的收到")
 
     def test_jev_failure_falls_back_to_analysis_model(self):
-        self.append(self.p, _claude_user("再来一条", "2026-01-01T00:01:00Z", cwd="E:/t/proj"))
+        self.append(self.p, _claude_user("再来一条", _ts(1), cwd="E:/t/proj"))
         with mock.patch.object(sw, "_ask_jev", side_effect=RuntimeError("jev down")), \
              mock.patch.object(sw, "_make_title", side_effect=lambda s: "T:" + s[:6]), \
              mock.patch("analysis_harness.complete_json",
@@ -245,7 +275,7 @@ class RoutingTests(WatcherTestCase):
             self.assertEqual(cj.call_count, 2)
 
     def test_jev_and_analysis_failure_keeps_message(self):
-        self.append(self.p, _claude_user("再来一条", "2026-01-01T00:01:00Z", cwd="E:/t/proj"))
+        self.append(self.p, _claude_user("再来一条", _ts(1), cwd="E:/t/proj"))
         with mock.patch.object(sw, "_ask_jev", side_effect=RuntimeError("jev down")), \
              mock.patch.object(sw, "_make_title", side_effect=lambda s: "T:" + s[:6]), \
              mock.patch("analysis_harness.complete_json", side_effect=RuntimeError("down")):
@@ -257,7 +287,7 @@ class RoutingTests(WatcherTestCase):
 class PersistenceTests(WatcherTestCase):
     def test_cursor_and_state_persisted(self):
         p = self.claude_file()
-        self.append(p, _claude_user("第一条请求", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("第一条请求", _ts(0), cwd="E:/t/proj"))
         self.poll()
         self.assertTrue(sw.STATE_FILE.exists())
         saved = json.loads(sw.STATE_FILE.read_text(encoding="utf-8"))
@@ -267,9 +297,9 @@ class PersistenceTests(WatcherTestCase):
     def test_replay_after_reload_does_not_duplicate(self):
         """Conversations are the truth on disk; state rebuild restores routing."""
         p = self.claude_file()
-        self.append(p, _claude_user("第一条请求", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("第一条请求", _ts(0), cwd="E:/t/proj"))
         self.poll()
-        self.append(p, _claude_assistant("回复一", "2026-01-01T00:01:00Z"))
+        self.append(p, _claude_assistant("回复一", _ts(1)))
         self.poll()
         # simulate restart: wipe memory, reload state + index
         sw._state = {"version": 1, "files": {}, "hermes": {}}
@@ -280,7 +310,7 @@ class PersistenceTests(WatcherTestCase):
         self.assertEqual(sess["next_line_no"], 3)
         self.assertEqual(sess["next_cid"], 2)
         # lazy open load on next message
-        self.append(p, _claude_user("再追问一下细节", "2026-01-01T00:02:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("再追问一下细节", _ts(2), cwd="E:/t/proj"))
         self.poll()
         recs = self.live_records("sess-abc")
         self.assertEqual(len(recs), 1)
@@ -291,7 +321,7 @@ class PersistenceTests(WatcherTestCase):
 
     def test_partial_line_waits(self):
         p = self.claude_file()
-        self.append(p, _claude_user("第一条请求", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("第一条请求", _ts(0), cwd="E:/t/proj"))
         self.poll()
         with open(p, "a", encoding="utf-8") as f:
             f.write('{"type":"user","timestamp":"2026-01-01T00:01:00Z","mes')
@@ -351,7 +381,7 @@ class HermesTests(WatcherTestCase):
 class ReadApiTests(WatcherTestCase):
     def test_list_and_get(self):
         p = self.claude_file()
-        self.append(p, _claude_user("第一条请求", "2026-01-01T00:00:00Z", cwd="E:/t/proj"))
+        self.append(p, _claude_user("第一条请求", _ts(0), cwd="E:/t/proj"))
         self.poll()
         rows = sw.list_conversations()
         self.assertEqual(len(rows), 1)
