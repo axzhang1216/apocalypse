@@ -10,7 +10,7 @@ import hashlib,http.server,json,math,os,queue,sys,threading,time
 from collections import Counter,defaultdict
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
-from urllib.parse import parse_qs,urlparse
+from urllib.parse import parse_qs,unquote,urlparse
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import server as legacy
 import feishu_sync
@@ -39,9 +39,19 @@ def semantic(*parts):
 def cosine(a,b):
     ab=sum(x*y for x,y in zip(a,b));aa=math.sqrt(sum(x*x for x in a));bb=math.sqrt(sum(x*x for x in b));return ab/(aa*bb or 1)
 def live_map():return{s.get('session_id'):s for s in legacy.scan_transcripts(limit=None)}
+def live_conversations(limit=200):
+    """Conversation rows from the stream watcher ([] when watcher is not running)."""
+    try:
+        import stream_watcher
+        return stream_watcher.list_conversations(limit)
+    except Exception:
+        return []
 def world():
     ws=legacy._load_workspace() or {};groups=defaultdict(list);live=live_map();objects=[];edges=[];projects=[]
     for key,p in (ws.get('projects') or {}).items():groups[(p.get('title') or p.get('name') or Path(str(key)).name or 'Unknown').strip()].append((key,p))
+    conv_by_proj=defaultdict(list)
+    for c in live_conversations(2000):
+        if c.get('project'):conv_by_proj[c['project'].strip().lower()].append(c)
     for title,members in groups.items():
         pid=sid('p',title);tags=[];sessions=[];points=[];last='';cwds=[]
         for key,p in members:
@@ -61,6 +71,8 @@ def world():
             raw=str(x.get('id') or f"{x.get('session_id','')}:{i}:{x.get('topic','')}");ids[raw]=sid('d',pid+':'+raw)
         for i,x in enumerate(points):
             raw=str(x.get('id') or f"{x.get('session_id','')}:{i}:{x.get('topic','')}");objects.append({'id':ids[raw],'type':'decision','title':x.get('topic') or 'Discussion / decision','name':x.get('topic') or 'Discussion / decision','project_id':pid,'session_id':x.get('session_id') or '','topic':x.get('topic') or '','decision':x.get('decision') or '','related_to':[ids[str(r)] for r in x.get('related_to') or [] if str(r) in ids],'messages':x.get('messages') or [],'ts':x.get('ts') or '','state':'recorded','importance':.78 if x.get('decision') else .58})
+        for c in conv_by_proj.get((title or '').strip().lower(),[])[:10]:
+            objects.append({'id':sid('v',c.get('cid') or ''),'type':'conversation','title':c.get('title') or 'Conversation','name':c.get('title') or 'Conversation','project_id':pid,'session_id':c.get('session_id') or '','conversation_id':c.get('cid') or '','agent':c.get('agent') or '','msg_count':c.get('msg_count') or 0,'ts':c.get('last_ts') or '','state':'open' if c.get('status')=='open' else 'closed','source':c.get('source') or 'live','importance':min(1.,.5+(c.get('msg_count') or 0)/40.)})
     for i,a in enumerate(projects):
         for b in projects[i+1:]:
             shared=len(set(a['tags'])&set(b['tags']));w=min(1,cosine(a['semantic'],b['semantic'])*.86+min(shared,3)*.08)
@@ -186,7 +198,7 @@ def ops():
         s=r.get('session_id') or '';sessions.append({'id':s,'provider':'openclaw','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'OPENCLAW','tool':'','resume':s,'cwd':r.get('cwd') or '','context_pct':0})
     for r in legacy.scan_hermes_transcripts(limit=8):
         s=r.get('session_id') or '';sessions.append({'id':s,'provider':'hermes','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'HERMES','tool':'','resume':s,'cwd':'','context_pct':0})
-    sessions.sort(key=lambda x:x.get('time') or '',reverse=True);return{'kpi':{'active_hours_84d':a['active_hours']},'activity':a['days'],'quotas':quotas(),'schedule':schedule(),'sessions':sessions[:20],'agents':agents(),'flow':flow()}
+    sessions.sort(key=lambda x:x.get('time') or '',reverse=True);return{'kpi':{'active_hours_84d':a['active_hours']},'activity':a['days'],'quotas':quotas(),'schedule':schedule(),'sessions':sessions[:20],'conversations':live_conversations(60),'agents':agents(),'flow':flow()}
 def normalize(e):
     k=e.get('type') or 'event';typ,text,intensity=('tool_call',e.get('tool') or 'tool',.82) if k=='tool_start' else ('tool_result',e.get('tool') or 'tool',.58) if k=='tool_end' else ('completion',e.get('reason') or 'session stop',.66) if k=='stop' else (k,k,.5);s=e.get('session_id') or '';return{'type':typ,'source_type':k,'session_id':s,'agent':'CLAUDE-'+s[:8] if s else 'CLAUDE','project':e.get('project_name') or 'SYSTEM','text':text,'intensity':intensity,'ts':e.get('ts') or iso(datetime.now(timezone.utc))}
 class Handler(legacy.Handler):
@@ -224,6 +236,12 @@ class Handler(legacy.Handler):
             state=feishu_sync.oauth_state();return self.send_json({'ok':True,'url':feishu_sync.authorize_url(state)})
         if p.startswith('/api/feishu/oauth/callback'):
             q=parse_qs(u.query);ok,msg=feishu_sync.complete_oauth((q.get('code') or [''])[0],(q.get('state') or [''])[0]);return self._oauth_page(ok,msg)
+        if p.startswith('/api/conversations/'):
+            cid=unquote(p[len('/api/conversations/'):].split('?')[0]);rec=None
+            try:
+                import stream_watcher;rec=stream_watcher.get_conversation(cid)
+            except Exception:rec=None
+            return self.send_json(rec,200) if rec else self.send_json({'error':'conversation not found'},404)
         if p=='/api/agents':return self.send_json(agents())
         if p=='/api/flow':return self.send_json(flow())
         if p=='/events/spatial':
@@ -270,7 +288,11 @@ class Handler(legacy.Handler):
                 return self.send_json({'ok':False,'error':str(exc),'code':exc.code},502)
         return super().do_POST()
 if __name__=='__main__':
-    legacy.DATA_DIR.mkdir(parents=True,exist_ok=True);legacy.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=legacy.DATA_DIR/'server.pid';pid.write_text(str(os.getpid()));threading.Thread(target=legacy.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),Handler);print(f'Apocalypse Spatial OS running at http://localhost:{PORT}',flush=True)
+    legacy.DATA_DIR.mkdir(parents=True,exist_ok=True);legacy.SESSIONS_DIR.mkdir(parents=True,exist_ok=True);pid=legacy.DATA_DIR/'server.pid';pid.write_text(str(os.getpid()))
+    try:
+        import stream_watcher;stream_watcher.start()
+    except Exception:pass
+    threading.Thread(target=legacy.broadcast_thread,daemon=True).start();http.server.ThreadingHTTPServer.allow_reuse_address=False;srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),Handler);print(f'Apocalypse Spatial OS running at http://localhost:{PORT}',flush=True)
     try:srv.serve_forever()
     finally:
         try:pid.unlink()

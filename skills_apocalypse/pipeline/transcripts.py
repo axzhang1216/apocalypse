@@ -593,6 +593,79 @@ def parse_transcript_points(path: Path, agent: str) -> tuple[list, list]:
     else:
         raise ValueError(f"unsupported agent: {agent}")
 
+def extract_transcript_line(agent: str, d: dict) -> dict | None:
+    """Extract one normalized message {role, ts, text} from a raw JSONL record.
+
+    Per-line companion to the whole-file _parse_transcript_points_* parsers.
+    Extraction rules are identical; used by the live stream watcher so a single
+    newly appended line can be normalized without re-parsing the whole file.
+    Returns None for records that are not user/assistant text messages.
+    """
+    if agent == "claude":
+        t = d.get("type", "")
+        if t not in ("user", "assistant"):
+            return None
+        if t == "user" and d.get("isMeta"):
+            return None
+        msg = d.get("message") or {}
+        cb = msg.get("content", [])
+        if isinstance(cb, str):
+            cb = [{"type": "text", "text": cb}]
+        if not isinstance(cb, list):
+            return None
+        if t == "user" and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in cb):
+            return None
+        texts = [c.get("text", "").strip() for c in cb
+                 if isinstance(c, dict) and c.get("type") == "text" and (c.get("text") or "").strip()]
+        if not texts:
+            return None
+        return {"role": t, "ts": d.get("timestamp", "") or "", "text": "\n".join(texts)}
+    if agent == "codex":
+        if d.get("type") != "response_item" or (d.get("payload") or {}).get("type") != "message":
+            return None
+        payload = d["payload"]
+        role = payload.get("role", "")
+        if role in ("developer", "system"):
+            return None
+        content = payload.get("content", [])
+        texts = []
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict):
+                ct = c.get("type", "")
+                if ct in ("input_text", "output_text") and (c.get("text") or "").strip():
+                    texts.append(c["text"].strip())
+        if not texts:
+            return None
+        return {"role": role, "ts": d.get("timestamp", "") or "", "text": "\n".join(texts)}
+    if agent == "grok":
+        t = d.get("type", "")
+        if t not in ("user", "assistant"):
+            return None
+        content = d.get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        return {"role": t, "ts": d.get("timestamp", "") or "", "text": content.strip()}
+    if agent == "hermes":
+        role = d.get("role", "")
+        content = d.get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        return {"role": role, "ts": str(d.get("timestamp", "")), "text": content.strip()}
+    if agent in ("openclaw", "pi"):
+        if d.get("type") != "message":
+            return None
+        msg = d.get("message") or {}
+        role = msg.get("role", "")
+        content = msg.get("content")
+        if not content:
+            return None
+        texts = _extract_text_blocks(content)
+        if not texts:
+            return None
+        return {"role": role, "ts": d.get("timestamp", "") or "", "text": "\n".join(texts)}
+    return None
+
+
 def scan(archive_root: Path | None = None, include_live: bool = True) -> dict[str, dict]:
     """Scan archive + live roots for all agents.
 

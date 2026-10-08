@@ -10,8 +10,8 @@ Apocalypse is a local workspace for understanding and operating AI-agent work ac
 
 Apocalypse now has one UI: **Spatial OS**.
 
-- **SPACE** — projects, sessions and discussion/decision memory in one semantic universe.
-- **OPS** — activity, LLM Plan usage, agenda, current sessions and active agents.
+- **SPACE** — projects, sessions, conversations and discussion/decision memory in one semantic universe.
+- **OPS** — activity, LLM Plan usage, agenda, live conversations and active agents.
 - **Session tools** — open/export/resume Claude sessions, plus safe `CLEAN NON-TEXT` and `REPAIR JSONL` maintenance.
 - **Analysis harness** — Apocalypse chooses and calls its own analysis model rather than depending on one specific agent.
 - **Settings** — UI scale, in-app reinitialize, and Windows self-update.
@@ -72,6 +72,8 @@ Apocalypse keeps its own state under:
 ├── secrets.json
 ├── workspace.json
 ├── events.jsonl
+├── stream_state.json
+├── conversations/
 └── repair_backups/
 ```
 
@@ -89,6 +91,21 @@ The harness currently supports:
 - authenticated Hermes one-shot CLI
 
 Workspace/session analysis, discussion-decision extraction, compact conversation analysis, schedule analysis and agent worklog analysis all use the selected Apocalypse analysis model.
+
+## Live conversation watcher
+
+`backend/stream_watcher.py` tails every agent's chat logs (Claude, Codex, pi, OpenClaw, Grok JSONL plus the Hermes SQLite store) about every 5 seconds, normalizes new lines and attaches them to per-session conversation records in real time:
+
+- Every message is judged by Jev (TypeSafe) — meaningfulness for all roles, new-topic detection for user messages — with the analysis model as fallback; noise (tool output, pings, IDE context) is dropped before judging.
+- A conversation closes when a user message starts a new topic; the last assistant reply of an episode is tagged as the conclusion.
+- Conversations are stored under `~/.claude/apocalypse/conversations/` as one JSONL per session, in the same record format the batch pipeline produces.
+- OPS lists conversations — click one to see the user questions and the assistant conclusion replies; the star map shows the most recent conversations under each project.
+
+History on first start: sessions already covered by the batch pipeline are adopted from its output (`skills_apocalypse/data/conversations_output` when running from the repo, or the directory in `APOCALYPSE_BATCH_CONVERSATIONS_DIR`). Adopted files are copied into the live directory, which is then authoritative; delete a live file to re-adopt from the batch output.
+
+Environment variables (all optional): `APOCALYPSE_STREAM_POLL_SECONDS` (default 5), `APOCALYPSE_JEV_TIMEOUT` (default 20), `APOCALYPSE_BATCH_CONVERSATIONS_DIR`, `APOCALYPSE_OUTPUT_LANGUAGE` (conversation titles default to 简体中文).
+
+One watcher per machine: both the desktop app and the dev server start the watcher, but a lock file (`stream_watcher.lock`) guarantees only the first one actually watches — two watchers would fight over the same live files.
 
 ## Plan usage
 

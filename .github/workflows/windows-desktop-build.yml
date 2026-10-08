@@ -85,7 +85,11 @@ jobs:
             --hidden-import volc_quota `
             --hidden-import grok_quota `
             --hidden-import feishu_sync `
+            --hidden-import stream_watcher `
+            --hidden-import analysis_harness `
+            --hidden-import transcripts `
             --paths skills_apocalypse/backend `
+            --paths skills_apocalypse/pipeline `
             --add-data "skills_apocalypse/frontend/spatial_os.html;." `
             --add-data "skills_apocalypse/frontend/spatial_os.css;." `
             --add-data "skills_apocalypse/frontend/spatial_os.js;." `

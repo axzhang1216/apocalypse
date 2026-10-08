@@ -10,9 +10,10 @@ esac
 if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
 
 echo "Installing Apocalypse Spatial OS → $DEST"
-mkdir -p "$DEST/hooks" "$DEST/backend" "$DEST/frontend" "$HOME/bin"
+mkdir -p "$DEST/hooks" "$DEST/backend" "$DEST/frontend" "$DEST/pipeline" "$HOME/bin"
 
 cp "$SRC"/backend/*.py "$DEST/backend/"
+cp "$SRC"/pipeline/*.py "$DEST/pipeline/"
 cp "$SRC"/frontend/* "$DEST/frontend/"
 cp "$SRC/apocalypse-ui" "$SRC/apocalypse-ui.cmd" "$DEST/"
 cp "$SRC/hooks/on-tool.sh" "$DEST/hooks/on-tool.sh"

@@ -82,6 +82,62 @@ class SpatialWorldTests(unittest.TestCase):
         self.assertTrue(all(d["project_id"] == project["id"] for d in decisions))
         self.assertTrue(all(d["related_to"] for d in decisions))
 
+    def test_world_adds_conversation_objects_per_project(self):
+        convs = [{
+            "cid": "sess-a::c001",
+            "session_id": "sess-a",
+            "agent": "claude",
+            "project": "apocalypse",
+            "title": "接入对话流",
+            "last_ts": "2026-09-04T09:30:00Z",
+            "msg_count": 6,
+            "status": "open",
+            "source": "live",
+        }]
+        with mock.patch.object(spatial_server.legacy, "_load_workspace", return_value=WORKSPACE), \
+             mock.patch.object(spatial_server.legacy, "scan_transcripts", return_value=LIVE), \
+             mock.patch.object(spatial_server, "live_conversations", return_value=convs):
+            payload = spatial_server.world()
+
+        convs_out = [obj for obj in payload["objects"] if obj["type"] == "conversation"]
+        self.assertEqual(len(convs_out), 1)
+        project = next(obj for obj in payload["objects"] if obj["type"] == "project")
+        conv = convs_out[0]
+        self.assertEqual(conv["project_id"], project["id"])
+        self.assertEqual(conv["conversation_id"], "sess-a::c001")
+        self.assertEqual(conv["state"], "open")
+        self.assertEqual(conv["msg_count"], 6)
+
+    def test_ops_includes_conversation_rows(self):
+        convs = [{
+            "cid": "sess-a::c001",
+            "session_id": "sess-a",
+            "agent": "claude",
+            "project": "apocalypse",
+            "title": "接入对话流",
+            "last_ts": "2026-09-04T09:30:00Z",
+            "msg_count": 6,
+            "status": "open",
+            "source": "live",
+        }]
+        empty_activity = {"window_days": 84, "active_hours": 0, "days": []}
+        with mock.patch.object(spatial_server, "activity", return_value=empty_activity), \
+             mock.patch.object(spatial_server, "ws_lookup", return_value=({}, {})), \
+             mock.patch.object(spatial_server, "agents", return_value=[]), \
+             mock.patch.object(spatial_server, "flow", return_value={"current": {"load": 0}}), \
+             mock.patch.object(spatial_server, "quotas", return_value=[]), \
+             mock.patch.object(spatial_server, "schedule", return_value={"events": [], "tasks": [], "suggested": []}), \
+             mock.patch.object(spatial_server.legacy, "read_events", return_value=[]), \
+             mock.patch.object(spatial_server.legacy, "scan_transcripts", return_value=LIVE), \
+             mock.patch.object(spatial_server.legacy, "scan_codex_transcripts", return_value=[]), \
+             mock.patch.object(spatial_server.legacy, "scan_pi_transcripts", return_value=[]), \
+             mock.patch.object(spatial_server.legacy, "scan_openclaw_transcripts", return_value=[]), \
+             mock.patch.object(spatial_server.legacy, "scan_hermes_transcripts", return_value=[]), \
+             mock.patch.object(spatial_server, "live_conversations", return_value=convs):
+            payload = spatial_server.ops()
+
+        self.assertEqual(payload["conversations"], convs)
+
     def test_hook_event_is_normalized_for_motion_layer(self):
         event = {
             "type": "tool_start",

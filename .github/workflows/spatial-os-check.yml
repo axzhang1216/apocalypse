@@ -38,6 +38,7 @@ jobs:
             skills_apocalypse/backend/volc_quota.py \
             skills_apocalypse/backend/chat_archive.py \
             skills_apocalypse/backend/feishu_sync.py \
+            skills_apocalypse/backend/stream_watcher.py \
             skills_apocalypse/backend/repair.py \
             skills_apocalypse/backend/app_lifecycle.py \
             skills_apocalypse/backend/anthropic.py \
@@ -53,7 +54,9 @@ jobs:
       - name: Discovery smoke test
         run: PYTHONPATH=skills_apocalypse/backend python skills_apocalypse/backend/agent_discovery.py > /tmp/apocalypse-discovery.json
       - name: Spatial bridge tests
-        run: python -m unittest skills_apocalypse.tests.test_spatial_server
+        run: |
+          python -X utf8 -m unittest skills_apocalypse.tests.test_spatial_server
+          python -X utf8 -m unittest skills_apocalypse.tests.test_stream_watcher
       - name: JavaScript syntax
         run: |
           node --check skills_apocalypse/frontend/spatial_os.js

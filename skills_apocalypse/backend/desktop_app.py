@@ -141,6 +141,12 @@ def main() -> int:
 
     chat_archive.start_background_sync()
 
+    try:
+        import stream_watcher
+        stream_watcher.start()
+    except Exception:
+        pass
+
     api = DesktopApi()
     window = webview.create_window(
         "Apocalypse",
