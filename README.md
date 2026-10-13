@@ -4,47 +4,23 @@
 
 Agents working in this repo should read [AGENTS.md](AGENTS.md) before changing layout, data, or local configuration.
 
-Apocalypse is a local workspace for understanding and operating AI-agent work across projects. It combines a spatial project memory, live/recent sessions, activity history, Plan usage, agenda context, and an Apocalypse-owned analysis harness in one interface.
+Apocalypse is a local workspace for understanding and operating AI-agent work across projects. It combines a spatial project memory, live/recent sessions, activity history, Plan usage, yesterday/today work briefs, and an Apocalypse-owned analysis harness in one interface.
 
 ## Current product
 
 Apocalypse now has one UI: **Spatial OS**.
 
 - **SPACE** — projects, sessions, conversations and discussion/decision memory in one semantic universe.
-- **OPS** — activity, LLM Plan usage, agenda, live conversations and active agents.
+- **OPS** — activity, LLM Plan usage, yesterday/today work briefs, live conversations and active agents.
 - **Session tools** — open/export/resume Claude sessions, plus safe `CLEAN NON-TEXT` and `REPAIR JSONL` maintenance.
 - **Analysis harness** — Apocalypse chooses and calls its own analysis model rather than depending on one specific agent.
 - **Settings** — UI scale, in-app reinitialize, and Windows self-update.
 
 The old dashboard, Three.js nebula workspace and `apocalypse.py` TUI are no longer part of the product.
 
-## Feishu agenda sync
+## Feishu (ACTIVITY day log)
 
-Feishu sync is **optional and manual** — Apocalypse never contacts the
-Feishu API at startup. AGENDA renders the last synced snapshot (or a local
-placeholder) and the ↻ SYNC button runs the network sync on demand.
-
-If `~/.claude/apocalypse/secrets.json` contains `feishu_app_id` and
-`feishu_app_secret` (or `FEISHU_APP_ID` / `FEISHU_APP_SECRET` are set), OPS
-can sync Feishu calendars and tasks into AGENDA.
-
-Personal calendar/task data requires **user OAuth**. Click `FEISHU LOGIN`
-(or `SYNC` when unauthorized) and complete the Feishu consent page. Register
-the redirect URI `http://localhost:7749/api/feishu/oauth/callback` in the
-Feishu app security settings, and authorize user scopes such as
-`calendar:calendar:read` / `calendar:calendar` and `task:task:read`.
-
-After authorization, click ↻ SYNC to fetch events from all calendars
-available to the user (not only the primary calendar) and open Task v2
-tasks. The result is cached locally (`~/.claude/apocalypse/feishu_sync_state.json`)
-so AGENDA keeps showing the last-known events. Opening a day in ACTIVITY
-also merges that day's Feishu events into the day log. Tokens are stored
-locally in `secrets.json` and refresh automatically.
-
-A failed sync never blocks the app: it only marks the AGENDA zone with a
-`FEISHU NOT SYNCED` / `FEISHU SYNC FAILED` banner (and the badge shows the
-reason on hover), so you can retry with ↻ SYNC. Server-side write endpoints
-remain available at `POST /api/feishu/event` and `POST /api/feishu/task`.
+Feishu sync is **optional and manual** — Apocalypse never contacts the Feishu API at startup, and OPS no longer shows a calendar. Opening a day in ACTIVITY can still merge that day's Feishu events into the day log if user OAuth is configured in `secrets.json`.
 
 ## First launch
 
@@ -74,6 +50,7 @@ Apocalypse keeps its own state under:
 ├── events.jsonl
 ├── stream_state.json
 ├── conversations/
+├── briefs/
 └── repair_backups/
 ```
 
@@ -106,6 +83,19 @@ History on first start: sessions already covered by the batch pipeline are adopt
 Environment variables (all optional): `APOCALYPSE_STREAM_POLL_SECONDS` (default 5), `APOCALYPSE_JEV_TIMEOUT` (default 20), `APOCALYPSE_BATCH_CONVERSATIONS_DIR`, `APOCALYPSE_OUTPUT_LANGUAGE` (conversation titles default to 简体中文).
 
 One watcher per machine: both the desktop app and the dev server start the watcher, but a lock file (`stream_watcher.lock`) guarantees only the first one actually watches — two watchers would fight over the same live files.
+
+## Daily work brief
+
+OPS **BRIEF** shows yesterday's brief and today's progress. Each project card is the user's need (from user messages) plus whether the agent's replies show that need was met. Unfinished needs and problems the agent reported go under leftovers. The server refreshes today at most once an hour; yesterday is generated once.
+
+`pipeline/daily_work_brief.py` collects live conversations first, then batch conversations, and calls the configured analysis model. It does not scan raw chat logs.
+
+```bash
+python skills_apocalypse/pipeline/daily_work_brief.py           # yesterday
+python skills_apocalypse/pipeline/daily_work_brief.py --today   # today up to now
+```
+
+JSON/Markdown land in `~/.claude/apocalypse/briefs/`.
 
 ## Plan usage
 
@@ -154,7 +144,7 @@ apocalypse-ui analyze   # refresh cached agenda/worklog analysis
 skills_apocalypse/
 ├── frontend/          # Spatial OS html / css / js
 ├── backend/           # server, Spatial OS runtime, quotas, harness
-├── pipeline/          # clean → segment → knowledge IR (latest scripts only)
+├── pipeline/          # clean → segment → knowledge IR, plus the daily work brief
 ├── data/              # cleaned sessions, conversations, knowledge IR, chat logs
 ├── hooks/
 ├── tests/

@@ -14,6 +14,7 @@ from urllib.parse import parse_qs,unquote,urlparse
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import server as legacy
 import feishu_sync
+import work_briefs
 PORT=legacy.PORT
 def asset_dir():
     if getattr(sys,"frozen",False):
@@ -198,7 +199,7 @@ def ops():
         s=r.get('session_id') or '';sessions.append({'id':s,'provider':'openclaw','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'OPENCLAW','tool':'','resume':s,'cwd':r.get('cwd') or '','context_pct':0})
     for r in legacy.scan_hermes_transcripts(limit=8):
         s=r.get('session_id') or '';sessions.append({'id':s,'provider':'hermes','project':r.get('project_name') or 'Unknown','title':r.get('thread_name') or s[:8],'goal':r.get('thread_name') or '','summary':'','time':r.get('last_ts') or '','status':'idle','agent':'HERMES','tool':'','resume':s,'cwd':'','context_pct':0})
-    sessions.sort(key=lambda x:x.get('time') or '',reverse=True);return{'kpi':{'active_hours_84d':a['active_hours']},'activity':a['days'],'quotas':quotas(),'schedule':schedule(),'sessions':sessions[:20],'conversations':live_conversations(60),'agents':agents(),'flow':flow()}
+    sessions.sort(key=lambda x:x.get('time') or '',reverse=True);return{'kpi':{'active_hours_84d':a['active_hours']},'activity':a['days'],'quotas':quotas(),'schedule':schedule(),'briefs':work_briefs.snapshot(),'sessions':sessions[:20],'conversations':live_conversations(60),'agents':agents(),'flow':flow()}
 def normalize(e):
     k=e.get('type') or 'event';typ,text,intensity=('tool_call',e.get('tool') or 'tool',.82) if k=='tool_start' else ('tool_result',e.get('tool') or 'tool',.58) if k=='tool_end' else ('completion',e.get('reason') or 'session stop',.66) if k=='stop' else (k,k,.5);s=e.get('session_id') or '';return{'type':typ,'source_type':k,'session_id':s,'agent':'CLAUDE-'+s[:8] if s else 'CLAUDE','project':e.get('project_name') or 'SYSTEM','text':text,'intensity':intensity,'ts':e.get('ts') or iso(datetime.now(timezone.utc))}
 class Handler(legacy.Handler):

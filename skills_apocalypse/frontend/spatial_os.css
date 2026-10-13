@@ -7,3 +7,15 @@
 .feishu-note{margin:2px 0 7px;padding:6px 8px;border:1px solid rgba(216,182,63,.4);border-radius:6px;background:rgba(216,182,63,.06);color:var(--amber);font:9px/1.5 Consolas,monospace;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .feishu-note.err{border-color:rgba(228,138,174,.5);background:rgba(228,138,174,.08);color:var(--magenta)}
 .feishu-note b{font-weight:700}
+.brief-pane{height:calc(100% - 22px);overflow:auto;margin-top:6px;display:grid;align-content:start;gap:14px}
+.brief-k{font:9px Consolas,monospace;color:var(--cyan);letter-spacing:.12em;margin-bottom:6px}
+.brief-head{color:var(--ink2);margin-bottom:8px;line-height:1.5}
+.brief-proj{padding:7px 0 8px;border-bottom:1px solid rgba(255,255,255,.035)}
+.brief-proj-name{color:var(--cyan);font:10px Consolas,monospace;letter-spacing:.06em}
+.brief-proj-name small{margin-left:8px;color:var(--mute);letter-spacing:.08em}
+.brief-need{color:var(--ink2);margin:5px 0 3px;line-height:1.5}
+.brief-progress{color:var(--mute);line-height:1.5}
+.brief-left-k{font:9px Consolas,monospace;color:var(--magenta);letter-spacing:.12em;margin:10px 0 4px}
+.brief-left{padding:4px 0 4px 8px;border-left:1px solid rgba(228,138,174,.4);color:var(--ink2);line-height:1.45;margin:4px 0}
+.brief-left b{display:block;font:9px Consolas,monospace;color:var(--magenta);letter-spacing:.04em;margin-bottom:2px}
+.brief-empty{color:var(--mute);padding:6px 0}

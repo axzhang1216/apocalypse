@@ -127,6 +127,7 @@ class SpatialWorldTests(unittest.TestCase):
              mock.patch.object(spatial_server, "flow", return_value={"current": {"load": 0}}), \
              mock.patch.object(spatial_server, "quotas", return_value=[]), \
              mock.patch.object(spatial_server, "schedule", return_value={"events": [], "tasks": [], "suggested": []}), \
+             mock.patch.object(spatial_server.work_briefs, "snapshot", return_value={"yesterday": None, "today": None, "refreshing": []}), \
              mock.patch.object(spatial_server.legacy, "read_events", return_value=[]), \
              mock.patch.object(spatial_server.legacy, "scan_transcripts", return_value=LIVE), \
              mock.patch.object(spatial_server.legacy, "scan_codex_transcripts", return_value=[]), \
@@ -174,6 +175,7 @@ class SpatialWorldTests(unittest.TestCase):
              mock.patch.object(spatial_server, "flow", return_value={"current": {"load": 0}}), \
              mock.patch.object(spatial_server, "quotas", return_value=[]), \
              mock.patch.object(spatial_server, "schedule", return_value={"events": [], "tasks": [], "suggested": []}), \
+             mock.patch.object(spatial_server.work_briefs, "snapshot", return_value={"yesterday": None, "today": None, "refreshing": []}), \
              mock.patch.object(spatial_server.legacy, "read_events", return_value=[]), \
              mock.patch.object(spatial_server.legacy, "scan_transcripts", return_value=LIVE), \
              mock.patch.object(spatial_server.legacy, "scan_codex_transcripts", return_value=codex), \
