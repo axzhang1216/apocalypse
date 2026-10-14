@@ -87,6 +87,8 @@ jobs:
             --hidden-import feishu_sync `
             --hidden-import stream_watcher `
             --hidden-import analysis_harness `
+            --hidden-import work_briefs `
+            --hidden-import daily_work_brief `
             --hidden-import transcripts `
             --paths skills_apocalypse/backend `
             --paths skills_apocalypse/pipeline `
@@ -203,8 +205,8 @@ jobs:
           cat > release-notes.md <<EOF
           ## Apocalypse $VERSION_TAG
 
-          - fix Windows startup crash: bundle tzdata so Feishu time zones (Asia/Shanghai) resolve at launch
-          - fall back to UTC instead of crashing if the time zone database is unavailable
+          - OPS BRIEF replaces the Feishu agenda with yesterday's brief and today's progress
+          - each project card is the user need plus whether agent replies show it was met
           - x64 and native x86 installers
 
           Installations under Program Files may still require a Windows UAC approval when a staged update is applied.
