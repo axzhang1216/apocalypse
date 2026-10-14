@@ -4,19 +4,70 @@
 
 Agents working in this repo should read [AGENTS.md](AGENTS.md) before changing layout, data, or local configuration.
 
-Apocalypse is a local workspace for understanding and operating AI-agent work across projects. It combines a spatial project memory, live/recent sessions, activity history, Plan usage, yesterday/today work briefs, and an Apocalypse-owned analysis harness in one interface.
+Apocalypse is a local workspace for understanding and operating AI-agent work across projects. It combines a cognitive project workspace, live/recent conversations, activity history, Plan usage, yesterday/today work briefs, and an Apocalypse-owned analysis harness in one interface.
 
 ## Current product
 
 Apocalypse now has one UI: **Spatial OS**.
 
-- **SPACE** — projects, sessions, conversations and discussion/decision memory in one semantic universe.
+- **SPACE** — a cognitive workspace. Level 0 surfaces `WHAT MATTERS NOW`, a large workspace search field and the user's Projects. Opening a Project reveals five stable modules: **Directions**, **Drafts**, **Knowledge**, **Outputs**, and **Patterns**. Session / conversation / agent details stay behind the visible knowledge layer as provenance and can be opened when needed.
 - **OPS** — activity, LLM Plan usage, yesterday/today work briefs, live conversations and active agents.
 - **Session tools** — open/export/resume Claude sessions, plus safe `CLEAN NON-TEXT` and `REPAIR JSONL` maintenance.
 - **Analysis harness** — Apocalypse chooses and calls its own analysis model rather than depending on one specific agent.
-- **Settings** — UI scale, in-app reinitialize, and Windows self-update.
+- **Settings** — UI scale, in-app reinitialize, storage/update controls and Windows self-update.
 
 The old dashboard, Three.js nebula workspace and `apocalypse.py` TUI are no longer part of the product.
+
+## Workspace model
+
+SPACE is organized around what the user wants to remember and continue, rather than around execution containers.
+
+Visible workspace concepts are intentionally small in number:
+
+- **Project** — a long-running body of work.
+- **Direction** — a research or work direction inside a Project.
+- **Draft** — an idea, discussion or partially formed piece of work. Ideas are treated as early Drafts.
+- **Knowledge** — notes, findings and decisions.
+- **Output** — reports, papers, code, figures, datasets and other produced artifacts.
+- **Pattern** — recurring user behavior, especially correction patterns repeatedly given to agents.
+
+The current frontend can already project existing `/api/world` data into this hierarchy: Project goals become Directions, recent conversations can appear as provisional Drafts, and recorded decisions/project summaries can appear under Knowledge. Outputs and Patterns show an explicit Knowledge-IR waiting state until persisted nodes are available.
+
+Execution provenance remains fully available underneath the workspace nodes:
+
+```text
+Workspace node
+    ↓
+Project
+    ↓
+Conversation
+    ↓
+Session
+    ↓
+Agent / cwd / source messages
+```
+
+The inspector can expose source Conversation and Session data and resume the original Session. This keeps SPACE focused on the user's mental model while preserving full traceability.
+
+The intended long-term flow is:
+
+```text
+Claude / Codex / Pi / Grok / ...
+              ↓
+           Session
+              ↓
+        Conversation
+              ↓
+        Knowledge IR
+              ↓
+     SpaceNote / Artifact
+              ↓
+        Workspace Graph
+              ↓
+             SPACE
+```
+
+Knowledge IR is the internal structured representation. SpaceNote is the smallest persistent knowledge unit. Future Knowledge-IR work should map distilled conversation content into Direction / Draft / Note / Finding / Decision / Output / Pattern nodes while retaining provenance and typed relations.
 
 ## Feishu (ACTIVITY day log)
 
@@ -76,7 +127,7 @@ Workspace/session analysis, discussion-decision extraction, compact conversation
 - Every message is judged by Jev (TypeSafe) — meaningfulness for all roles, new-topic detection for user messages — with the analysis model as fallback; noise (tool output, pings, IDE context) is dropped before judging.
 - A conversation closes when a user message starts a new topic; the last assistant reply of an episode is tagged as the conclusion.
 - Conversations are stored under `~/.claude/apocalypse/conversations/` as one JSONL per session, in the same record format the batch pipeline produces.
-- OPS lists conversations — click one to see the user questions and the assistant conclusion replies; the star map shows the most recent conversations under each project.
+- OPS lists conversations — click one to see the user questions and the assistant conclusion replies.
 
 History on first start: sessions already covered by the batch pipeline are adopted from its output (`skills_apocalypse/data/conversations_output` when running from the repo, or the directory in `APOCALYPSE_BATCH_CONVERSATIONS_DIR`). Adopted files are copied into the live directory, which is then authoritative; delete a live file to re-adopt from the batch output. A session the watcher has never seen is history unless it actually started within the last hour (the first record's timestamp, not just a fresh file mtime). A weeks-old session that is still active is watched from now on; its earlier messages stay the batch pipeline's job.
 
