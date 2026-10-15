@@ -17,8 +17,9 @@ if str(BASE) not in sys.path:
 
 import app_lifecycle
 import chat_archive
+import project_records
 import server as core
-import spatial_server_plus as spatial
+import spatial_server_records as spatial
 
 URL = f"http://localhost:{spatial.PORT}"
 HEALTH_URL = URL + "/api/settings/status"
@@ -116,8 +117,6 @@ def _watch_restart(window) -> None:
     try:
         window.destroy()
     except Exception:
-        # If Edge/WebView is already shutting down, main() will still enter its
-        # finally block and arm the staged updater.
         pass
 
 
@@ -144,6 +143,11 @@ def main() -> int:
     try:
         import stream_watcher
         stream_watcher.start()
+    except Exception:
+        pass
+
+    try:
+        project_records.start()
     except Exception:
         pass
 
@@ -174,10 +178,6 @@ def main() -> int:
     finally:
         restart = app_lifecycle.restart_requested()
         _cleanup(server)
-        # This only arms when a verified update is actually staged. The helper
-        # runs detached, waits for this PID to disappear, then runs Inno Setup
-        # with /VERYSILENT. Normal closes leave the app closed; RESTART NOW
-        # launches the newly installed executable after setup succeeds.
         try:
             app_lifecycle.arm_update_on_exit(
                 parent_pid=os.getpid(),
