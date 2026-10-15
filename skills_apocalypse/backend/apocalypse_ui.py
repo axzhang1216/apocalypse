@@ -11,32 +11,27 @@ from pathlib import Path
 
 PORT=7749;HOST="127.0.0.1";URL=f"http://localhost:{PORT}"
 DATA_DIR=Path.home()/".claude"/"apocalypse";PID_FILE=DATA_DIR/"server.pid";LOG_FILE=DATA_DIR/"server.log";SETUP_FILE=DATA_DIR/"setup.json"
-APP_DIR=Path(__file__).resolve().parent;SERVER=APP_DIR/"spatial_server_plus.py";OPS_ANALYSIS=APP_DIR/"ops_analysis.py"
+APP_DIR=Path(__file__).resolve().parent;SERVER=APP_DIR/"spatial_server_records.py";OPS_ANALYSIS=APP_DIR/"ops_analysis.py"
 
 
 def _http_ok(path,timeout=.8):
  try:
   with urllib.request.urlopen(URL+path,timeout=timeout) as r:return 200<=r.status<300
  except Exception:return False
-
 def _port_open():
  try:
   with socket.create_connection((HOST,PORT),timeout=.5):return True
  except OSError:return False
-
 def _read_pid():
  try:return int(PID_FILE.read_text(encoding="utf-8").strip())
  except Exception:return None
-
 def _pid_alive(pid):
  if not pid:return False
  try:os.kill(pid,0);return True
  except OSError:return False
  except Exception:return _port_open()
-
 def _owned():
  pid=_read_pid();return _pid_alive(pid),pid
-
 def _running():return _http_ok("/api/world")
 
 def status_payload():
@@ -49,7 +44,6 @@ def _terminate(pid):
   if os.name=="nt":subprocess.run(["taskkill","/PID",str(pid),"/T"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
   else:os.kill(pid,signal.SIGTERM)
  except Exception:pass
-
 def stop_server(quiet=False):
  owned,pid=_owned()
  if not owned or not pid:
@@ -69,7 +63,6 @@ def stop_server(quiet=False):
  ok=not _port_open()
  if not quiet:print("Apocalypse stopped." if ok else f"Port {PORT} is still in use.")
  return ok
-
 def _spawn():
  if not SERVER.exists():raise FileNotFoundError(f"Spatial runtime missing: {SERVER}")
  DATA_DIR.mkdir(parents=True,exist_ok=True);log=open(LOG_FILE,"ab",buffering=0);kw={"cwd":str(APP_DIR),"stdin":subprocess.DEVNULL,"stdout":log,"stderr":subprocess.STDOUT,"close_fds":True}
@@ -77,7 +70,6 @@ def _spawn():
  else:kw["start_new_session"]=True
  try:return subprocess.Popen([sys.executable,str(SERVER)],**kw)
  finally:log.close()
-
 def start_server(open_browser=True,onboarding=False):
  if _running():
   target=URL+("/?onboarding=1" if onboarding else "");print(f"Apocalypse already running → {target}")
@@ -93,15 +85,12 @@ def start_server(open_browser=True,onboarding=False):
   if proc.poll() is not None:break
   time.sleep(.12)
  print(f"Apocalypse failed to start. Check {LOG_FILE}",file=sys.stderr);return False
-
 def open_ui(onboarding=False):
  if not _running():return start_server(True,onboarding)
  target=URL+("/?onboarding=1" if onboarding else "");webbrowser.open(target);print(f"Opened {target}");return True
-
 def run_analysis(hours=24):
  if not OPS_ANALYSIS.exists():print("ops_analysis.py is missing.",file=sys.stderr);return 1
  return subprocess.run([sys.executable,str(OPS_ANALYSIS),"--hours",str(hours)],cwd=str(APP_DIR)).returncode
-
 def main(argv=None):
  p=argparse.ArgumentParser(description="Apocalypse Spatial OS launcher")
  p.add_argument("action",nargs="?",default="start",choices=("start","stop","restart","status","open","init","analyze"));p.add_argument("--no-open",action="store_true");p.add_argument("--hours",type=int,default=24);a=p.parse_args(argv)
