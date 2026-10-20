@@ -137,7 +137,7 @@ One watcher per machine: both the desktop app and the dev server start the watch
 
 ## Daily work brief
 
-OPS **BRIEF** shows yesterday's brief and today's progress. Each project card is the user's need (from user messages) plus whether the agent's replies show that need was met. Unfinished needs and problems the agent reported go under leftovers. The server refreshes today at most once an hour; yesterday is generated once.
+OPS **BRIEF** shows yesterday's brief and today's progress. Each project card splits the user's needs into finished and pending items, each a short bullet line judged only from the agent's replies. The progress view shows only the finished items; the potential-problems list shows only pending items and any action the user personally must take, never finished work. A problem the agent found or ran into on its own is not shown. A card expands on click; collapsed it shows only the project name. The server refreshes today at most once an hour; yesterday is generated once.
 
 `pipeline/daily_work_brief.py` collects live conversations first, then batch conversations, and calls the configured analysis model. It does not scan raw chat logs.
 

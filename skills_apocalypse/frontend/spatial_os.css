@@ -10,12 +10,19 @@
 .brief-pane{height:calc(100% - 22px);overflow:auto;margin-top:6px;display:grid;align-content:start;gap:14px}
 .brief-k{font:9px Consolas,monospace;color:var(--cyan);letter-spacing:.12em;margin-bottom:6px}
 .brief-head{color:var(--ink2);margin-bottom:8px;line-height:1.5}
-.brief-proj{padding:7px 0 8px;border-bottom:1px solid rgba(255,255,255,.035)}
-.brief-proj-name{color:var(--cyan);font:10px Consolas,monospace;letter-spacing:.06em}
-.brief-proj-name small{margin-left:8px;color:var(--mute);letter-spacing:.08em}
-.brief-need{color:var(--ink2);margin:5px 0 3px;line-height:1.5}
-.brief-progress{color:var(--mute);line-height:1.5}
+.brief-proj{padding:6px 0;border-bottom:1px solid rgba(255,255,255,.035)}
 .brief-left-k{font:9px Consolas,monospace;color:var(--magenta);letter-spacing:.12em;margin:10px 0 4px}
-.brief-left{padding:4px 0 4px 8px;border-left:1px solid rgba(228,138,174,.4);color:var(--ink2);line-height:1.45;margin:4px 0}
-.brief-left b{display:block;font:9px Consolas,monospace;color:var(--magenta);letter-spacing:.04em;margin-bottom:2px}
+.brief-left{padding:6px 0 6px 8px;border-left:1px solid rgba(228,138,174,.4);margin:4px 0}
+.brief-proj summary,.brief-left summary,.brief-flat{list-style:none;cursor:pointer;display:flex;gap:6px;align-items:flex-start;color:var(--ink2);line-height:1.5}
+.brief-flat{cursor:default}
+.brief-proj summary::-webkit-details-marker,.brief-left summary::-webkit-details-marker{display:none}
+.brief-proj summary::after,.brief-left summary::after{content:'+';margin-left:auto;padding-left:8px;color:var(--mute);font:10px Consolas,monospace;flex:0 0 auto}
+.brief-proj[open] summary::after,.brief-left[open] summary::after{content:'−'}
+.brief-proj summary b,.brief-left summary b,.brief-flat b{font:10px Consolas,monospace;font-weight:400;letter-spacing:.04em;flex:0 0 auto}
+.brief-proj summary b{color:var(--cyan)}
+.brief-left summary b,.brief-left.brief-flat b{color:var(--magenta)}
+.brief-dot{width:3px;height:3px;border-radius:50%;background:var(--cyan);flex:0 0 auto;margin-top:.62em}
+.brief-left .brief-dot{background:var(--magenta)}
+.brief-line{display:flex;gap:6px;padding:3px 0 0 12px;color:var(--mute);line-height:1.5}
+.brief-line .brief-dot{background:var(--mute);margin-top:.62em}
 .brief-empty{color:var(--mute);padding:6px 0}

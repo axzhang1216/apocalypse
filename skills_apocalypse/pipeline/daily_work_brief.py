@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,6 +76,21 @@ def clip(text, limit: int) -> str:
     if len(s) <= limit:
         return s
     return s[: limit - 1].rstrip() + "…"
+
+
+def split_lines(text) -> list[str]:
+    """One bullet per sentence/clause; drop trailing semicolons."""
+    parts = re.split(r"(?<=[。！？!?；;])\s*", str(text or ""))
+    return [p.strip().rstrip("；;").strip() for p in parts if p.strip()]
+
+
+def progress_items(value) -> list[str]:
+    """New briefs return a list; old ones returned one prose string."""
+    if isinstance(value, list):
+        items = [clip(v, 120) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
+    else:
+        items = split_lines(value)
+    return items[:6]
 
 
 def batch_dir() -> Path:
@@ -261,29 +277,28 @@ def brief_prompt(payload: dict) -> str:
     window = "from the start of today until now. Work may still be in progress." if payload.get("through_now") else "on this calendar day."
     return f"""You are writing a work brief for the person who spent this window working with AI coding agents ({window}).
 
-Read user_requests as the user's needs. Read conclusions as the agent's report of what happened.
-The brief is about the user's purpose, not the agent's machinery.
+Read user_requests as the user's needs. Read conclusions only to judge whether those needs were met.
+The reader is the user. Every line is about what the user asked for and whether it happened.
 
 Rules:
 - Group by project. Use the conversation title as the project heading when project is unknown.
-- One card per project. Merge several conversations in the same project.
-- need: restate the user's goal in plain language, from user_requests only.
-- progress: say whether that need was met, judging only from the agent's conclusions. Do not list job IDs, PIDs, row counts, file counts, percentages, or directory names unless the user asked for that number.
-- leftovers: a user need that the conclusions do not show as finished, or a problem the agent itself reported. Not a next-step suggestion the user never asked for.
-- Do not invent work. If evidence is thin, say so.
+- Refer to the brief's day as "当日" (or the date).
+- Use the user's vocabulary. No implementation detail: job IDs, PIDs, command lines, file paths, directory names, error names, debugging steps, counts, percentages, or model metrics, unless the user explicitly asked for that number.
+- Derived the item from the users requests, derive the state (finished or not) from the agents final response.
+- "done":  Array of 1-5 short noun phrases for the user's requests that are finished by agents. 
+- "pending": array of 1-5 short noun phrases for the user's requests that are still unfinished. Never repeat finished work here.
+- "user_action": empty unless the user personally must do something to unblock a pending item. Then write one short sentence.
+- Never list a problem the agent discovered or ran into on its own; only the user's own needs. Do not invent work. If evidence is thin, say so.
 
 Return JSON only:
 {{
-  "headline": "one sentence covering the window",
+  "headline": "one sentence: what the user got done this window, in plain language",
   "projects": [
-    {{"project": "project heading", "need": "what the user asked for", "progress": "whether that need was met, in one or two sentences", "status": "done|partial|blocked|unknown"}}
-  ],
-  "leftovers": [
-    {{"project": "project heading", "item": "unfinished user need, or a problem the agent reported", "why": "which user or agent line shows this"}}
+    {{"project": "project heading", "done": ["short item 已完成"], "pending": ["short item 尚未完成"], "user_action": "what the user must do, or empty"}}
   ],
   "notes": "empty, or one sentence if evidence was missing or truncated"
 }}
-At most 6 projects and 8 leftovers. Write in the configured output language.
+At most 6 projects. Write in the configured output language.
 
 EVIDENCE:
 {json.dumps(payload, ensure_ascii=False)}
@@ -294,67 +309,65 @@ def normalize_brief(obj: dict, day, stats: dict) -> dict:
     if not isinstance(obj, dict):
         raise RuntimeError("brief analysis returned non-object JSON")
 
-    def rows(key, fields, limit):
-        out = []
-        for item in obj.get(key) or []:
-            if not isinstance(item, dict):
-                continue
-            row = {name: str(item.get(name) or "").strip() for name in fields}
-            if any(row.values()):
-                out.append(row)
-        return out[:limit]
-
-    projects = rows("projects", ("project", "need", "progress", "status"), 6)
-    if not projects:
-        for item in obj.get("did") or []:
-            if not isinstance(item, dict):
-                continue
-            projects.append({
-                "project": str(item.get("project") or "").strip(),
-                "need": str(item.get("what") or item.get("need") or "").strip(),
-                "progress": str(item.get("progress") or "").strip(),
-                "status": str(item.get("status") or "").strip(),
-            })
-            if len(projects) >= 6:
-                break
-
+    projects = []
+    for item in obj.get("projects") or []:
+        if not isinstance(item, dict):
+            continue
+        done = progress_items(item.get("done"))
+        pending = progress_items(item.get("pending"))
+        if not done and not pending and item.get("progress"):
+            # Earlier prompt versions returned one progress field.
+            if str(item.get("status") or "").strip().lower() == "done":
+                done = progress_items(item.get("progress"))
+            else:
+                pending = progress_items(item.get("progress"))
+        row = {
+            "project": str(item.get("project") or "").strip(),
+            "done": done,
+            "pending": pending,
+            "user_action": str(item.get("user_action") or "").strip(),
+        }
+        if any(row.values()):
+            projects.append(row)
+        if len(projects) >= 6:
+            break
     return {
         "date": day.isoformat(),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "headline": str(obj.get("headline") or "").strip(),
         "projects": projects,
-        "leftovers": rows("leftovers", ("project", "item", "why"), 8),
         "notes": str(obj.get("notes") or "").strip(),
         "evidence": stats,
     }
 
 
 def render_markdown(brief: dict) -> str:
+    projects = brief.get("projects") or []
+    done = [p for p in projects if p.get("done")]
+    pending = [p for p in projects if p.get("pending") or p.get("user_action")]
     lines = [f"# {brief['date']}", ""]
     if brief.get("headline"):
         lines += [brief["headline"], ""]
-    lines.append("## 项目")
-    if brief.get("projects"):
-        for item in brief["projects"]:
-            status = f"（{item['status']}）" if item.get("status") else ""
+    lines.append("## 已完成")
+    if done:
+        for item in done:
             project = item.get("project") or "未标明项目"
-            lines.append(f"### {project}{status}")
-            if item.get("need"):
-                lines.append(f"- 需求：{item['need']}")
-            if item.get("progress"):
-                lines.append(f"- 进展：{item['progress']}")
+            lines.append(f"### {project}")
+            lines += [f"- {line}" for line in item.get("done") or []]
             lines.append("")
     else:
-        lines.append("- 没有可用的工作记录。")
-        lines.append("")
-    lines += ["", "## 遗留问题"]
-    if brief.get("leftovers"):
-        for item in brief["leftovers"]:
+        lines += ["- 没有已完成的工作。", ""]
+    lines.append("## 潜在问题")
+    if pending:
+        for item in pending:
             project = item.get("project") or "未标明项目"
-            why = f" — {item['why']}" if item.get("why") else ""
-            lines.append(f"- {project}：{item.get('item') or '（未说明）'}{why}")
+            lines.append(f"### {project}")
+            lines += [f"- {line}" for line in item.get("pending") or []]
+            if item.get("user_action"):
+                lines.append(f"- 需要你做：{item['user_action']}")
+            lines.append("")
     else:
-        lines.append("- 没有从当天证据里看出还没做完的事。")
+        lines.append("- 没有未完成的事。")
     if brief.get("notes"):
         lines += ["", f"> {brief['notes']}"]
     ev = brief.get("evidence") or {}
@@ -373,7 +386,6 @@ def empty_brief(day, stats: dict) -> dict:
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "headline": "没有找到和 AI 的工作对话。",
         "projects": [],
-        "leftovers": [],
         "notes": "没有调用分析模型。",
         "evidence": stats,
     }
@@ -391,7 +403,7 @@ def build(day, zone: ZoneInfo, *, dry_run: bool = False, timeout: float = 180.0,
         return {"dry_run": True, "evidence": payload, "stats": stats}
     if not episodes:
         return empty_brief(day, stats)
-    raw = analysis_harness.complete_json(brief_prompt(payload), max_tokens=8000, timeout=timeout)
+    raw = analysis_harness.complete_json(brief_prompt(payload), max_tokens=16000, timeout=timeout)
     return normalize_brief(raw, day, stats)
 
 
